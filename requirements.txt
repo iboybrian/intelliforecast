@@ -1,0 +1,8 @@
+polars
+plotly
+streamlit
+statsforecast
+utilsforecast
+pyarrow
+Pillow
+XlsxWriter

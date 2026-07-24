@@ -6,13 +6,31 @@ y los muestra en Streamlit. Correr con:  streamlit run app.py
 """
 
 import datetime
+import io
+import subprocess
+import sys
 from pathlib import Path
 
 import polars as pl
 import plotly.graph_objects as go
 import streamlit as st
+import xlsxwriter
+from PIL import Image
 
-st.set_page_config(page_title="Forecast de Demanda", page_icon="📦", layout="wide")
+
+def cargar_favicon():
+    """Recorta assets/intelliforecast.png a cuadrado y lo reduce para el tab del navegador."""
+    ruta = Path(__file__).parent / "assets" / "intelliforecast.png"
+    if not ruta.exists():
+        return "📦"
+    im = Image.open(ruta).convert("RGBA")
+    lado = min(im.size)
+    x0 = (im.width - lado) // 2
+    y0 = (im.height - lado) // 2
+    return im.crop((x0, y0, x0 + lado, y0 + lado)).resize((64, 64), Image.LANCZOS)
+
+
+st.set_page_config(page_title="Forecast de Demanda", page_icon=cargar_favicon(), layout="wide")
 
 ADI_THRESHOLD = 1.32
 CV2_THRESHOLD = 0.49
@@ -22,7 +40,7 @@ H = 4
 BG_DARK = "#0E1B2E"
 BG_PANEL = "#16283F"
 BG_PANEL_2 = "#1E3A5C"
-TEXT_LIGHT = "#F5F7FA"
+TEXT_LIGHT = "#FFFFFF"
 ACCENT_CYAN = "#7DD8F5"
 ACCENT_ORANGE = "#E8935C"
 GRID_LINE = "rgba(245,247,250,0.10)"
@@ -55,12 +73,25 @@ STRINGS = {
         "app_title": "📦 Forecast de Demanda",
         "app_caption": "Demo — clasificación SBC + statsforecast (Nixtla)",
         "lang_label": "Idioma",
+        "upload_title": "📤 Cargar tus datos",
+        "upload_ventas_label": "Ventas históricas (CSV)",
+        "upload_inventario_label": "Inventario (CSV)",
+        "upload_help": "Mismas columnas que el formato actual — ventas: sku, fecha, cantidad, centro_distribucion · inventario: sku, existencia, pack, lead_time_dias.",
+        "upload_button": "Procesar",
+        "upload_processing": "Procesando datos y recalculando forecast…",
+        "upload_success": "Datos actualizados.",
+        "upload_error": "Error al procesar los archivos:",
+        "no_data_filter": "Ninguna combinación cumple los filtros seleccionados.",
         "cd_label": "Centro de distribución",
+        "clase_label": "Tipo de SKU",
+        "proveedor_label": "Proveedor",
+        "categoria_label": "Categoría",
         "sku_label": "SKU (drill-down)",
         "combos_metric": "Combinaciones SKU-CD",
         "all": "(Todos)",
         "tab_overview": "Vista general",
         "tab_risk": "SKUs en riesgo de quiebre",
+        "tab_overstock": "SKUs en sobre-stock",
         "title_overview": "Vista general de inventario",
         "scope_all": "todos los centros",
         "scope_caption": "Ámbito: **{scope}** · {n} combinaciones SKU-CD",
@@ -73,7 +104,7 @@ STRINGS = {
         "days_unit": "d",
         "weeks_unit": "sem",
         "months_unit": "mes",
-        "scatter_title": "Clasificación de demanda · ADI vs CV²",
+        "scatter_title": "Clasificación de demanda según comportamiento",
         "scatter_caption": "Cuadrantes Syntetos-Boylan-Croston. Cada punto es una combinación SKU-CD.",
         "adi_axis": "ADI  (intervalo promedio entre demandas)",
         "cv2_axis": "CV²  (variabilidad del tamaño)",
@@ -83,11 +114,16 @@ STRINGS = {
         "modelos_title": "Mix de modelos ganadores",
         "criticos_title": "SKUs críticos — riesgo de quiebre y sobre-stock",
         "criticos_caption": "{n} combinaciones fuera de estado Normal. Tabla ordenable — clic en encabezados.",
+        "export_button": "Descargar datos de reporte e Histórico de Venta",
         "col_sku": "SKU", "col_cd": "CD", "col_clase": "Clasificación", "col_estado": "Estado",
-        "col_existencia": "Existencia", "col_fcst": "Fcst. semanal", "col_doh": "DOH", "col_wos": "WOS",
+        "col_existencia": "Existencia", "col_fcst": "Fcst. mensual", "col_doh": "DOH", "col_wos": "WOS",
         "col_lead": "Lead time (d)", "col_reorden": "Reorden sugerido", "col_modelo": "Modelo", "col_mase": "MASE",
         "col_moh": "MOH", "col_fcst_compra": "Forecast de compra", "col_fecha_ideal": "Fecha ideal reorden",
-        "col_dias_atraso": "Días de atraso",
+        "col_fcst_prom": "Fcst mensual promedio",
+        "col_dias_quiebre": "Días estimados para quiebre",
+        "risk_asap": "ASAP (con retraso)",
+        "risk_sugerido": "Sugerido a ordenar",
+        "risk_sugerido_help": "Sugerido a ordenar para cubrir 1.5× el lead time.",
         "drilldown_title": "Drill-down · {sku}",
         "cd_drill_label": "Centro de distribución para el detalle",
         "clasificacion_metric": "Clasificación",
@@ -100,8 +136,8 @@ STRINGS = {
         "chart_hist": "Histórico",
         "chart_fcst": "Forecast ({modelo})",
         "chart_xaxis": "Fecha",
-        "chart_yaxis": "Cantidad (semanal)",
-        "chart_title": "{sku} · {cd} — histórico + {h} semanas de forecast",
+        "chart_yaxis": "Cantidad (mensual)",
+        "chart_title": "{sku} · {cd} — histórico + {h} meses de forecast",
         "winner_caption": "Modelo ganador **{modelo}** seleccionado por menor MASE (**{mase:.2f}**) en backtesting con cross-validation temporal (rolling origin).",
         "risk_header": "SKUs en riesgo de quiebre",
         "risk_caption": "Ordenados por urgencia (menor DOH primero). Ámbito: **{scope}** · {n} combinaciones.",
@@ -111,22 +147,40 @@ STRINGS = {
         "risk_n_metric": "SKUs en riesgo",
         "risk_no_results": "No hay combinaciones en riesgo de quiebre para este filtro.",
         "risk_stock": "Stock",
-        "risk_fcst_compra_help": "Demanda pronosticada durante el lead time de reabasto",
-        "risk_cantidad": "Cantidad",
+        "risk_legend_full": "Demanda pronosticada durante el lead time de reabasto · DOH y fecha ideal de reorden estimados con la existencia registrada hoy ({hoy}).",
         "risk_expander": "📈 Ver venta de los últimos 12 periodos",
-        "risk_sales_yaxis": "Cantidad (semanal)",
-        "risk_asof_note": "DOH y fecha ideal de reorden estimados con la existencia registrada hoy ({hoy}).",
+        "risk_sales_yaxis": "Cantidad (mensual)",
+        "overstock_header": "SKUs en sobre-stock",
+        "overstock_caption": "Ordenados por exceso (mayor DOH primero). Ámbito: **{scope}** · {n} combinaciones.",
+        "overstock_n_metric": "SKUs en sobre-stock",
+        "overstock_total_exceso": "Unidades en exceso totales",
+        "overstock_no_results": "No hay combinaciones en sobre-stock para este filtro.",
+        "overstock_asof_note": "DOH estimado con la existencia registrada hoy ({hoy}).",
+        "col_exceso": "Exceso",
     },
     "en": {
         "app_title": "📦 Demand Forecast",
         "app_caption": "Demo — SBC classification + statsforecast (Nixtla)",
         "lang_label": "Language",
+        "upload_title": "📤 Upload your data",
+        "upload_ventas_label": "Sales history (CSV)",
+        "upload_inventario_label": "Inventory (CSV)",
+        "upload_help": "Same columns as the current format — sales: sku, fecha, cantidad, centro_distribucion · inventory: sku, existencia, pack, lead_time_dias.",
+        "upload_button": "Process",
+        "upload_processing": "Processing data and recalculating forecast…",
+        "upload_success": "Data updated.",
+        "upload_error": "Error processing files:",
+        "no_data_filter": "No combination matches the selected filters.",
         "cd_label": "Distribution center",
+        "clase_label": "SKU type",
+        "proveedor_label": "Supplier",
+        "categoria_label": "Category",
         "sku_label": "SKU (drill-down)",
         "combos_metric": "SKU-DC combinations",
         "all": "(All)",
         "tab_overview": "Overview",
         "tab_risk": "SKUs at stockout risk",
+        "tab_overstock": "Overstock SKUs",
         "title_overview": "Inventory overview",
         "scope_all": "all distribution centers",
         "scope_caption": "Scope: **{scope}** · {n} SKU-DC combinations",
@@ -149,11 +203,16 @@ STRINGS = {
         "modelos_title": "Winning model mix",
         "criticos_title": "Critical SKUs — stockout risk and overstock",
         "criticos_caption": "{n} combinations outside Normal status. Sortable table — click headers.",
+        "export_button": "Download report data and Sales History",
         "col_sku": "SKU", "col_cd": "DC", "col_clase": "Classification", "col_estado": "Status",
-        "col_existencia": "Stock", "col_fcst": "Weekly fcst.", "col_doh": "DOH", "col_wos": "WOS",
+        "col_existencia": "Stock", "col_fcst": "Monthly fcst.", "col_doh": "DOH", "col_wos": "WOS",
         "col_lead": "Lead time (d)", "col_reorden": "Suggested reorder", "col_modelo": "Model", "col_mase": "MASE",
         "col_moh": "MOH", "col_fcst_compra": "Purchase forecast", "col_fecha_ideal": "Ideal reorder date",
-        "col_dias_atraso": "Days overdue",
+        "col_fcst_prom": "Avg monthly fcst",
+        "col_dias_quiebre": "Est. days to stockout",
+        "risk_asap": "ASAP (overdue)",
+        "risk_sugerido": "Suggested to order",
+        "risk_sugerido_help": "Suggested to order to cover 1.5× the lead time.",
         "drilldown_title": "Drill-down · {sku}",
         "cd_drill_label": "Distribution center for detail",
         "clasificacion_metric": "Classification",
@@ -166,8 +225,8 @@ STRINGS = {
         "chart_hist": "Historical",
         "chart_fcst": "Forecast ({modelo})",
         "chart_xaxis": "Date",
-        "chart_yaxis": "Quantity (weekly)",
-        "chart_title": "{sku} · {cd} — historical + {h}-week forecast",
+        "chart_yaxis": "Quantity (monthly)",
+        "chart_title": "{sku} · {cd} — historical + {h}-month forecast",
         "winner_caption": "Winning model **{modelo}** selected for lowest MASE (**{mase:.2f}**) via temporal cross-validation backtesting (rolling origin).",
         "risk_header": "SKUs at stockout risk",
         "risk_caption": "Sorted by urgency (lowest DOH first). Scope: **{scope}** · {n} combinations.",
@@ -177,11 +236,16 @@ STRINGS = {
         "risk_n_metric": "SKUs at risk",
         "risk_no_results": "No combinations at stockout risk for this filter.",
         "risk_stock": "Stock",
-        "risk_fcst_compra_help": "Forecasted demand over the replenishment lead time",
-        "risk_cantidad": "Quantity",
+        "risk_legend_full": "Forecasted demand over the replenishment lead time · DOH and ideal reorder date estimated using stock on record as of today ({hoy}).",
         "risk_expander": "📈 View sales for the last 12 periods",
-        "risk_sales_yaxis": "Quantity (weekly)",
-        "risk_asof_note": "DOH and ideal reorder date estimated using stock on record as of today ({hoy}).",
+        "risk_sales_yaxis": "Quantity (monthly)",
+        "overstock_header": "SKUs at overstock",
+        "overstock_caption": "Sorted by excess (highest DOH first). Scope: **{scope}** · {n} combinations.",
+        "overstock_n_metric": "Overstock SKUs",
+        "overstock_total_exceso": "Total excess units",
+        "overstock_no_results": "No combinations at overstock for this filter.",
+        "overstock_asof_note": "DOH estimated using stock on record as of today ({hoy}).",
+        "col_exceso": "Excess",
     },
 }
 
@@ -190,8 +254,17 @@ def inject_css():
     st.markdown(
         f"""
         <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+        html, body, [class*="css"], .stText, .stMarkdown, h1, h2, h3, h4, .stMetric, button, input, select {{
+            font-family: 'JetBrains Mono', monospace !important;
+        }}
         .stApp {{
             background: radial-gradient(circle at 78% 15%, {BG_PANEL_2} 0%, {BG_DARK} 55%);
+            color: {TEXT_LIGHT};
+        }}
+        .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+        .stApp label, .stApp span, .stApp li {{
+            color: {TEXT_LIGHT} !important;
         }}
         section[data-testid="stSidebar"] {{
             background-color: {BG_PANEL};
@@ -220,6 +293,68 @@ def inject_css():
             background-color: {BG_PANEL};
             border-radius: 8px;
         }}
+        /* Quitar barra blanca superior pero conservar el botón de colapsar sidebar */
+        header[data-testid="stHeader"] {{
+            background: transparent;
+        }}
+        div[data-testid="stAppViewContainer"] > .main .block-container {{
+            padding-top: 1rem;
+        }}
+        /* Filtros compactos: sin wrap vertical, menos espacio entre widgets y hacia los tabs */
+        div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {{
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            max-height: 2.4rem;
+        }}
+        div[element-container-key] {{
+            margin-bottom: 0 !important;
+        }}
+        div.stSelectbox, div.stMultiSelect {{
+            margin-bottom: 0 !important;
+        }}
+        div[data-testid="stTabs"] {{
+            margin-top: 0.25rem;
+        }}
+        /* Botón de descarga: alineado a la derecha, tipografía y padding consistentes */
+        div.stDownloadButton {{
+            display: flex;
+            justify-content: flex-end;
+        }}
+        div.stDownloadButton button {{
+            background-color: {ACCENT_CYAN} !important;
+            color: {BG_DARK} !important;
+            border: none !important;
+            font-family: 'JetBrains Mono', monospace !important;
+            font-weight: 600;
+            padding: 0.5rem 1rem;
+            height: auto;
+            line-height: 1.3;
+        }}
+        div.stDownloadButton button:hover {{
+            background-color: {ACCENT_ORANGE} !important;
+            color: {BG_DARK} !important;
+        }}
+        div.stDownloadButton button * {{
+            color: {BG_DARK} !important;
+        }}
+        /* File uploader legible: botón siempre con color de acento */
+        div[data-testid="stFileUploader"] section {{
+            background-color: {BG_PANEL_2};
+            border: 1px dashed {ACCENT_CYAN};
+        }}
+        div[data-testid="stFileUploader"] button {{
+            background-color: {ACCENT_CYAN} !important;
+            color: {BG_DARK} !important;
+            border: none !important;
+            font-weight: 600;
+        }}
+        div[data-testid="stFileUploader"] button:hover {{
+            background-color: {ACCENT_ORANGE} !important;
+            color: {BG_DARK} !important;
+        }}
+        div[data-testid="stFileUploader"] button * {{
+            color: {BG_DARK} !important;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -231,7 +366,7 @@ inject_css()
 if "lang" not in st.session_state:
     st.session_state["lang"] = "es"
 
-lang_choice = st.sidebar.radio(
+st.sidebar.radio(
     "🌐 " + STRINGS[st.session_state["lang"]]["lang_label"],
     options=["es", "en"],
     format_func=lambda x: "Español" if x == "es" else "English",
@@ -255,6 +390,59 @@ def load():
     return res, hist
 
 
+def procesar_archivos(ventas_file, inventario_file):
+    base = Path(__file__).parent
+    (base / "ventas_historicas.csv").write_bytes(ventas_file.getvalue())
+    (base / "inventario.csv").write_bytes(inventario_file.getvalue())
+    return subprocess.run(
+        [sys.executable, str(base / "pipeline.py")],
+        cwd=base, capture_output=True, text=True,
+    )
+
+
+def exportar_excel(df_kpi: pl.DataFrame, ids: list[str]) -> bytes:
+    """xlsx con la tabla KPI visible (hoja 1) + historico mensual, ultimos 24 meses (hoja 2)."""
+    hist24 = (
+        hist.filter(pl.col("unique_id").is_in(ids))
+        .sort(["unique_id", "fecha"])
+        .group_by("unique_id", maintain_order=True).tail(24)
+        .select(["sku", "centro_distribucion", "fecha", "cantidad"])
+    )
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    df_kpi.write_excel(workbook=wb, worksheet="KPIs")
+    hist24.write_excel(workbook=wb, worksheet="Historico 24m")
+    wb.close()
+    return buf.getvalue()
+
+
+def boton_descarga(container, df_kpi: pl.DataFrame, ids: list[str], file_name: str):
+    container.download_button(
+        TXT["export_button"], data=exportar_excel(df_kpi, ids), file_name=file_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        icon="📥",
+    )
+
+
+# ------------------------------------------------------------------ Sidebar
+st.sidebar.title(TXT["app_title"])
+st.sidebar.caption(TXT["app_caption"])
+
+with st.sidebar.expander(TXT["upload_title"]):
+    ventas_file = st.file_uploader(TXT["upload_ventas_label"], type="csv", key="upload_ventas")
+    inventario_file = st.file_uploader(TXT["upload_inventario_label"], type="csv", key="upload_inventario")
+    st.caption(TXT["upload_help"])
+    if st.button(TXT["upload_button"], disabled=not (ventas_file and inventario_file)):
+        with st.spinner(TXT["upload_processing"]):
+            resultado = procesar_archivos(ventas_file, inventario_file)
+        if resultado.returncode == 0:
+            st.cache_data.clear()
+            st.success(TXT["upload_success"])
+            st.rerun()
+        else:
+            st.error(TXT["upload_error"])
+            st.code(resultado.stderr[-3000:])
+
 res, hist = load()
 if res is None:
     st.error("No se encontró resultados.parquet. Corre primero:  python pipeline.py")
@@ -265,22 +453,49 @@ res = res.with_columns(
     pl.col("clasificacion").replace(CLASE_MAP).alias("clasificacion"),
 )
 
-# ------------------------------------------------------------------ Sidebar
-st.sidebar.title(TXT["app_title"])
-st.sidebar.caption(TXT["app_caption"])
+# ------------------------------------------------------------------ Filtros (una sola fila)
+f1, f2, f3, f4, f5, f6 = st.columns([1, 1.2, 1, 1, 1.3, 0.9])
 
 cds = [TXT["all"]] + sorted(res["centro_distribucion"].unique().to_list())
-cd_sel = st.sidebar.selectbox(TXT["cd_label"], cds)
+cd_sel = f1.selectbox(TXT["cd_label"], cds)
 
-res_f = res if cd_sel == TXT["all"] else res.filter(pl.col("centro_distribucion") == cd_sel)
+clases_disp = sorted(res["clasificacion"].unique().to_list())
+clase_sel = f2.multiselect(TXT["clase_label"], clases_disp, default=clases_disp)
+
+
+def filtro_opcional(container, col, label):
+    """selectbox (Todos)+valores si la columna existe; deshabilitado si no."""
+    if col in res.columns:
+        opciones = [TXT["all"]] + sorted(res[col].drop_nulls().unique().to_list())
+        return container.selectbox(label, opciones)
+    container.selectbox(label, [TXT["all"]], disabled=True)
+    return TXT["all"]
+
+
+proveedor_sel = filtro_opcional(f3, "proveedor", TXT["proveedor_label"])
+categoria_sel = filtro_opcional(f4, "categoria", TXT["categoria_label"])
+
+res_f = res
+if cd_sel != TXT["all"]:
+    res_f = res_f.filter(pl.col("centro_distribucion") == cd_sel)
+if clase_sel:
+    res_f = res_f.filter(pl.col("clasificacion").is_in(clase_sel))
+if "proveedor" in res.columns and proveedor_sel != TXT["all"]:
+    res_f = res_f.filter(pl.col("proveedor") == proveedor_sel)
+if "categoria" in res.columns and categoria_sel != TXT["all"]:
+    res_f = res_f.filter(pl.col("categoria") == categoria_sel)
+
+if res_f.height == 0:
+    st.warning(TXT["no_data_filter"])
+    st.stop()
 
 skus = sorted(res_f["sku"].unique().to_list())
-sku_sel = st.sidebar.selectbox(TXT["sku_label"], skus)
+sku_sel = f5.selectbox(TXT["sku_label"], skus)
+f6.metric(TXT["combos_metric"], res_f.height)
 
-st.sidebar.divider()
-st.sidebar.metric(TXT["combos_metric"], res_f.height)
-
-tab_overview, tab_risk = st.tabs([TXT["tab_overview"], TXT["tab_risk"]])
+tab_overview, tab_risk, tab_overstock = st.tabs(
+    [TXT["tab_overview"], TXT["tab_risk"], TXT["tab_overstock"]]
+)
 
 # ==================================================================== TAB 1: Overview
 with tab_overview:
@@ -391,21 +606,26 @@ with tab_overview:
     st.divider()
 
     st.subheader(TXT["criticos_title"])
-    criticos = res_f.filter(pl.col("estado_inventario") != estado_normal).sort(
+    criticos_base = res_f.filter(pl.col("estado_inventario") != estado_normal).sort(
         ["estado_inventario", "doh"]
-    ).select([
+    )
+    criticos = criticos_base.select([
         pl.col("sku").alias(TXT["col_sku"]), pl.col("centro_distribucion").alias(TXT["col_cd"]),
         pl.col("clasificacion").alias(TXT["col_clase"]), pl.col("estado_inventario").alias(TXT["col_estado"]),
         pl.col("existencia_prorrateada").round(0).alias(TXT["col_existencia"]),
-        pl.col("forecast_semanal_promedio").round(1).alias(TXT["col_fcst"]),
+        pl.col("forecast_mensual_promedio").round(1).alias(TXT["col_fcst"]),
         pl.col("doh").round(1).alias(TXT["col_doh"]),
         pl.col("wos").round(1).alias(TXT["col_wos"]),
         pl.col("lead_time_dias").alias(TXT["col_lead"]),
         pl.col("cantidad_reorden").round(0).alias(TXT["col_reorden"]),
         pl.col("modelo_ganador").alias(TXT["col_modelo"]), pl.col("mase").round(2).alias(TXT["col_mase"]),
     ])
+    if criticos.height > 0:
+        leg_col, dl_col = st.columns([4, 1])
+        leg_col.caption(TXT["criticos_caption"].format(n=criticos.height))
+        boton_descarga(dl_col, criticos, criticos_base["unique_id"].to_list(), "skus_criticos.xlsx")
+
     st.dataframe(criticos, use_container_width=True, height=340, hide_index=True)
-    st.caption(TXT["criticos_caption"].format(n=criticos.height))
 
     st.divider()
 
@@ -487,7 +707,6 @@ with tab_risk:
     m1.metric(TXT["risk_n_metric"], riesgo.height)
     m2.metric(TXT["risk_total_reorden"], f"{riesgo['cantidad_reorden'].sum():,.0f}" if riesgo.height else "0")
 
-    st.caption(TXT["risk_asof_note"].format(hoy=datetime.date.today().isoformat()))
     st.divider()
 
     if riesgo.height == 0:
@@ -499,21 +718,38 @@ with tab_risk:
         riesgo = riesgo.with_columns(
             (pl.lit(hoy).cast(pl.Date) - pl.duration(days=pl.col("dias_atraso"))).alias("fecha_ideal_reorden")
         )
+        # fecha ideal como texto: si ya pasó -> ASAP; si no, fecha (sin hora).
+        fecha_txt_expr = (
+            pl.when(pl.col("fecha_ideal_reorden") < pl.lit(hoy).cast(pl.Date))
+              .then(pl.lit(TXT["risk_asap"]))
+              .otherwise(pl.col("fecha_ideal_reorden").dt.to_string("%Y-%m-%d"))
+        )
+        riesgo = riesgo.with_columns(
+            fecha_txt_expr.alias("fecha_ideal_txt"),
+            pl.col("doh").round(0).cast(pl.Int64).alias("dias_para_quiebre"),
+        )
 
         tabla_riesgo = riesgo.select([
             pl.col("sku").alias(TXT["col_sku"]), pl.col("centro_distribucion").alias(TXT["col_cd"]),
             pl.col("clasificacion").alias(TXT["col_clase"]),
             pl.col("lead_time_dias").alias(TXT["col_lead"]),
             pl.col("existencia_prorrateada").round(0).alias(TXT["risk_stock"]),
+            pl.col("forecast_mensual_promedio").round(1).alias(TXT["col_fcst_prom"]),
             pl.col("moh").round(1).alias(TXT["col_moh"]),
             pl.col("demanda_lead_time").round(0).alias(TXT["col_fcst_compra"]),
             pl.col("modelo_ganador").alias(TXT["col_modelo"]),
-            pl.col("fecha_ideal_reorden").alias(TXT["col_fecha_ideal"]),
-            pl.col("dias_atraso").cast(pl.Int64).alias(TXT["col_dias_atraso"]),
-            pl.col("cantidad_reorden").round(0).alias(TXT["risk_cantidad"]),
+            pl.col("fecha_ideal_txt").alias(TXT["col_fecha_ideal"]),
+            pl.col("dias_para_quiebre").alias(TXT["col_dias_quiebre"]),
+            pl.col("cantidad_reorden").round(0).alias(TXT["risk_sugerido"]),
         ])
-        st.dataframe(tabla_riesgo, use_container_width=True, height=420, hide_index=True)
-        st.caption(TXT["risk_fcst_compra_help"] + " · " + TXT["risk_asof_note"].format(hoy=hoy.isoformat()))
+        leg_col, dl_col = st.columns([4, 1])
+        leg_col.caption(TXT["risk_legend_full"].format(hoy=hoy.isoformat()))
+        boton_descarga(dl_col, tabla_riesgo, riesgo["unique_id"].to_list(), "riesgo_quiebre.xlsx")
+
+        st.dataframe(
+            tabla_riesgo, use_container_width=True, height=420, hide_index=True,
+            column_config={TXT["risk_sugerido"]: st.column_config.NumberColumn(help=TXT["risk_sugerido_help"])},
+        )
 
         st.divider()
         st.subheader(TXT["risk_expander"])
@@ -533,3 +769,66 @@ with tab_risk:
             xaxis=axis(), yaxis=axis(title=TXT["risk_sales_yaxis"]),
         )
         st.plotly_chart(figr, use_container_width=True, key=f"chart_{fila['unique_id']}")
+
+# ==================================================================== TAB 3: SKUs en sobre-stock
+with tab_overstock:
+    st.title(TXT["overstock_header"])
+    scope = TXT["scope_all"] if cd_sel == TXT["all"] else cd_sel
+
+    # umbral de sobre-stock: 120 dias (ver estado_inventario en pipeline.py)
+    exceso_expr = pl.max_horizontal(
+        pl.col("existencia_prorrateada") - pl.col("demanda_diaria_promedio") * 120, pl.lit(0.0)
+    )
+    sobre = res_f.filter(pl.col("estado_inventario") == estado_sobre).sort("doh", descending=True)
+    sobre = sobre.with_columns(exceso_expr.round(0).alias("exceso_unidades"))
+
+    st.caption(TXT["overstock_caption"].format(scope=scope, n=sobre.height))
+
+    search_over = st.text_input("🔎 " + TXT["risk_search"], "", key="overstock_search")
+    if search_over:
+        sobre = sobre.filter(pl.col("sku").str.contains(f"(?i){search_over}"))
+
+    m1, m2 = st.columns(2)
+    m1.metric(TXT["overstock_n_metric"], sobre.height)
+    m2.metric(TXT["overstock_total_exceso"], f"{sobre['exceso_unidades'].sum():,.0f}" if sobre.height else "0")
+
+    st.divider()
+
+    if sobre.height == 0:
+        st.info(TXT["overstock_no_results"])
+    else:
+        tabla_sobre = sobre.select([
+            pl.col("sku").alias(TXT["col_sku"]), pl.col("centro_distribucion").alias(TXT["col_cd"]),
+            pl.col("clasificacion").alias(TXT["col_clase"]),
+            pl.col("existencia_prorrateada").round(0).alias(TXT["risk_stock"]),
+            pl.col("doh").round(1).alias(TXT["col_doh"]),
+            pl.col("moh").round(1).alias(TXT["col_moh"]),
+            pl.col("forecast_mensual_promedio").round(1).alias(TXT["col_fcst"]),
+            pl.col("modelo_ganador").alias(TXT["col_modelo"]),
+            pl.col("exceso_unidades").alias(TXT["col_exceso"]),
+        ])
+
+        leg_col, dl_col = st.columns([4, 1])
+        leg_col.caption(TXT["overstock_asof_note"].format(hoy=datetime.date.today().isoformat()))
+        boton_descarga(dl_col, tabla_sobre, sobre["unique_id"].to_list(), "sobre_stock.xlsx")
+
+        st.dataframe(tabla_sobre, use_container_width=True, height=420, hide_index=True)
+
+        st.divider()
+        st.subheader(TXT["risk_expander"])
+
+        opciones_o = [f"{s} · {c}" for s, c in zip(sobre["sku"], sobre["centro_distribucion"])]
+        elegido_o = st.selectbox(TXT["risk_select_sku"], opciones_o, key="overstock_select")
+        sku_o, cd_o = [p.strip() for p in elegido_o.split("·")]
+        fila_o = sobre.filter((pl.col("sku") == sku_o) & (pl.col("centro_distribucion") == cd_o)).row(0, named=True)
+
+        serie12_o = hist.filter(pl.col("unique_id") == fila_o["unique_id"]).sort("fecha").tail(12)
+        figo = go.Figure(go.Bar(
+            x=serie12_o["fecha"].to_list(), y=serie12_o["cantidad"].to_list(),
+            marker_color=ACCENT_ORANGE,
+        ))
+        figo.update_layout(
+            **PLOTLY_LAYOUT, height=280, margin=dict(l=10, r=10, t=10, b=10),
+            xaxis=axis(), yaxis=axis(title=TXT["risk_sales_yaxis"]),
+        )
+        st.plotly_chart(figo, use_container_width=True, key=f"chart_over_{fila_o['unique_id']}")
