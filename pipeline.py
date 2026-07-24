@@ -4,7 +4,10 @@ Pipeline de forecast de demanda (demo).
 Lee ventas_historicas.csv + inventario.csv, clasifica cada combinacion
 SKU-centro_distribucion (Syntetos-Boylan-Croston), corre backtesting con
 varios modelos estadisticos via statsforecast, selecciona el ganador por
-MASE, genera forecast de 4 semanas y calcula KPIs de inventario.
+MASE, genera forecast de 4 meses y calcula KPIs de inventario.
+
+Ventas historicas vienen semanales pero se agregan a nivel mensual antes
+de clasificar/pronosticar (ver aggregate_monthly).
 
 Salida: resultados.parquet (tabla de resultados + KPIs) e historico.parquet
 (serie historica larga, para graficar en el dashboard).
@@ -17,22 +20,33 @@ from statsforecast import StatsForecast
 from statsforecast.models import AutoETS, AutoARIMA, Theta, SeasonalNaive, CrostonClassic, TSB, ADIDA
 from utilsforecast.losses import mase
 
-H = 4                 # horizonte de forecast: 4 semanas
-SEASON_LENGTH = 52    # estacionalidad anual para datos semanales
+H = 4                 # horizonte de forecast: 4 meses
+SEASON_LENGTH = 12    # estacionalidad anual para datos mensuales
 N_WINDOWS = 3         # ventanas de cross-validation (rolling origin)
 STEP_SIZE = 4
-FREQ = "1w"
+FREQ = "1mo"          # offset polars (no pandas "MS")
 
 # ADI/CV2 son los umbrales estandar de Syntetos-Boylan-Croston
 ADI_THRESHOLD = 1.32
 CV2_THRESHOLD = 0.49
 
-REGULAR_MODELS = [AutoETS(season_length=SEASON_LENGTH), AutoARIMA(season_length=SEASON_LENGTH),
-                  Theta(season_length=SEASON_LENGTH), SeasonalNaive(season_length=SEASON_LENGTH)]
-REGULAR_MODEL_NAMES = ["AutoETS", "AutoARIMA", "Theta", "SeasonalNaive"]
+LEAD_TIME_BUFFER = 1.5    # cantidad_reorden cubre 1.5x el lead time (colchon de seguridad)
 
-INTERMITTENT_MODELS = [CrostonClassic(), TSB(alpha_d=0.2, alpha_p=0.2), ADIDA()]
-INTERMITTENT_MODEL_NAMES = ["CrostonClassic", "TSB", "ADIDA"]
+# columnas opcionales a nivel SKU en inventario.csv; se propagan a resultados si existen.
+OPTIONAL_SKU_COLS = ["proveedor", "categoria"]
+
+# names se derivan con str(m) — es el mismo alias que statsforecast usa para nombrar columnas.
+FAMILIES = {
+    "regular": {
+        "clases": ["Smooth", "Erratic"],
+        "models": [AutoETS(season_length=SEASON_LENGTH), AutoARIMA(season_length=SEASON_LENGTH),
+                   Theta(season_length=SEASON_LENGTH), SeasonalNaive(season_length=SEASON_LENGTH)],
+    },
+    "intermitente": {
+        "clases": ["Intermittent", "Lumpy"],
+        "models": [CrostonClassic(), TSB(alpha_d=0.2, alpha_p=0.2), ADIDA()],
+    },
+}
 
 
 def load_data():
@@ -44,8 +58,18 @@ def load_data():
     return ventas, inventario
 
 
+def aggregate_monthly(ventas: pl.DataFrame) -> pl.DataFrame:
+    """Suma cantidad semanal por mes calendario (mes-inicio)."""
+    return (
+        ventas.with_columns(pl.col("fecha").dt.truncate("1mo").alias("fecha"))
+        .group_by(["unique_id", "sku", "centro_distribucion", "fecha"])
+        .agg(pl.col("cantidad").sum())
+        .sort(["unique_id", "fecha"])
+    )
+
+
 def classify_demand(ventas: pl.DataFrame) -> pl.DataFrame:
-    """ADI (intervalo promedio entre semanas con demanda) y CV2 (sobre valores > 0)."""
+    """ADI (intervalo promedio entre meses con demanda) y CV2 (sobre valores > 0)."""
     stats = ventas.group_by(["unique_id", "sku", "centro_distribucion"]).agg([
         pl.len().alias("n_periodos"),
         (pl.col("cantidad") > 0).sum().alias("n_con_demanda"),
@@ -115,16 +139,13 @@ def backtest_and_forecast(df_family: pl.DataFrame, models, model_names) -> pl.Da
 
 
 def build_forecast_table(ventas: pl.DataFrame, clasif: pl.DataFrame) -> pl.DataFrame:
-    ids_regular = clasif.filter(pl.col("clasificacion").is_in(["Smooth", "Erratic"]))["unique_id"].to_list()
-    ids_intermitente = clasif.filter(pl.col("clasificacion").is_in(["Intermittent", "Lumpy"]))["unique_id"].to_list()
-
     resultados = []
-    if len(ids_regular) > 0:
-        fam = ventas.filter(pl.col("unique_id").is_in(ids_regular))
-        resultados.append(backtest_and_forecast(fam, REGULAR_MODELS, REGULAR_MODEL_NAMES))
-    if len(ids_intermitente) > 0:
-        fam = ventas.filter(pl.col("unique_id").is_in(ids_intermitente))
-        resultados.append(backtest_and_forecast(fam, INTERMITTENT_MODELS, INTERMITTENT_MODEL_NAMES))
+    for fam_cfg in FAMILIES.values():
+        ids = clasif.filter(pl.col("clasificacion").is_in(fam_cfg["clases"]))["unique_id"].to_list()
+        if ids:
+            fam = ventas.filter(pl.col("unique_id").is_in(ids))
+            names = [str(m) for m in fam_cfg["models"]]
+            resultados.append(backtest_and_forecast(fam, fam_cfg["models"], names))
 
     forecast_tabla = pl.concat(resultados, how="vertical")
     return clasif.join(forecast_tabla, on="unique_id")
@@ -154,16 +175,13 @@ def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.Data
 
     forecast_cols = [f"forecast_w{i}" for i in range(1, H + 1)]
     tabla = tabla.with_columns(
-        pl.mean_horizontal(forecast_cols).alias("forecast_semanal_promedio")
-    ).with_columns(
-        pl.col("forecast_semanal_promedio").clip(lower_bound=0).alias("forecast_semanal_promedio")
+        pl.mean_horizontal(forecast_cols).clip(lower_bound=0).alias("forecast_mensual_promedio")
     )
 
-    EPS = 1e-6
     tabla = tabla.with_columns(
-        (pl.col("forecast_semanal_promedio") / 7).alias("demanda_diaria_promedio")
+        (pl.col("forecast_mensual_promedio") / 30.44).alias("demanda_diaria_promedio")
     ).with_columns(
-        pl.when(pl.col("demanda_diaria_promedio") > EPS)
+        pl.when(pl.col("demanda_diaria_promedio") > 1e-6)
           .then(pl.col("existencia_prorrateada") / pl.col("demanda_diaria_promedio"))
           .otherwise(None)
           .alias("doh")
@@ -182,7 +200,7 @@ def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.Data
     )
 
     tabla = tabla.with_columns(
-        (pl.col("demanda_diaria_promedio") * pl.col("lead_time_dias")).alias("demanda_lead_time")
+        (pl.col("demanda_diaria_promedio") * pl.col("lead_time_dias") * LEAD_TIME_BUFFER).alias("demanda_lead_time")
     ).with_columns(
         pl.when(pl.col("pack") > 0)
           .then((pl.col("demanda_lead_time") / pl.col("pack")).ceil() * pl.col("pack"))
@@ -199,7 +217,8 @@ def main():
     except Exception:
         pass
     ventas, inventario = load_data()
-    print(f"Ventas: {ventas.shape}, Inventario: {inventario.shape}")
+    ventas = aggregate_monthly(ventas)
+    print(f"Ventas (mensual): {ventas.shape}, Inventario: {inventario.shape}")
 
     clasif = classify_demand(ventas)
     print("Clasificacion de demanda:")
@@ -209,6 +228,11 @@ def main():
     print(f"Tabla de forecast: {tabla.shape}")
 
     resultados = calcular_kpis(tabla, ventas, inventario)
+
+    presentes = [c for c in OPTIONAL_SKU_COLS if c in inventario.columns]
+    if presentes:
+        resultados = resultados.join(inventario.select(["sku", *presentes]).unique("sku"), on="sku", how="left")
+
     print(f"Resultados finales: {resultados.shape}")
     print(resultados.group_by("estado_inventario").len())
 
