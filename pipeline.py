@@ -13,6 +13,7 @@ Salida: resultados.parquet (tabla de resultados + KPIs) e historico.parquet
 (serie historica larga, para graficar en el dashboard).
 """
 
+import json
 import sys
 
 import polars as pl
@@ -33,6 +34,7 @@ CV2_THRESHOLD = 0.49
 LEAD_TIME_BUFFER = 1.5    # cantidad_reorden cubre 1.5x el lead time (colchon de seguridad)
 
 # columnas opcionales a nivel SKU en inventario.csv; se propagan a resultados si existen.
+# (mecanismo separado de dimensiones.json/propagate_extra_dims mas abajo — no tocar este.)
 OPTIONAL_SKU_COLS = ["proveedor", "categoria"]
 
 # names se derivan con str(m) — es el mismo alias que statsforecast usa para nombrar columnas.
@@ -211,12 +213,42 @@ def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.Data
     return tabla
 
 
+def load_dim_config(path="dimensiones.json"):
+    """Dimensiones extra elegidas en app.py al subir CSVs. Sin archivo -> [] (compat con
+    `python pipeline.py` a secas, sin pasar por app.py)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+
+
+def propagate_extra_dims(resultados, ventas_raw, inventario, config):
+    """Une columnas extra elegidas en la UI. Nunca pisa una columna ya presente en
+    resultados (mismo footgun silencioso de .join/.with_columns que con OPTIONAL_SKU_COLS).
+    Origen ventas: join por sku+centro_distribucion (el valor puede variar por CD).
+    Origen inventario: join por sku (mismo patron que OPTIONAL_SKU_COLS)."""
+    for entry in config:
+        col, origen = entry["columna"], entry["origen"]
+        src = ventas_raw if origen == "ventas" else inventario
+        if col not in src.columns or col in resultados.columns:
+            continue
+        if origen == "ventas":
+            por_grupo = src.group_by(["sku", "centro_distribucion"]).agg(pl.col(col).first())
+            resultados = resultados.join(por_grupo, on=["sku", "centro_distribucion"], how="left")
+        else:
+            por_sku = src.select(["sku", col]).unique("sku")
+            resultados = resultados.join(por_sku, on="sku", how="left")
+    return resultados
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
     ventas, inventario = load_data()
+    ventas_raw = ventas  # antes de aggregate_monthly, para dims extra de origen "ventas"
     ventas = aggregate_monthly(ventas)
     print(f"Ventas (mensual): {ventas.shape}, Inventario: {inventario.shape}")
 
@@ -232,6 +264,14 @@ def main():
     presentes = [c for c in OPTIONAL_SKU_COLS if c in inventario.columns]
     if presentes:
         resultados = resultados.join(inventario.select(["sku", *presentes]).unique("sku"), on="sku", how="left")
+
+    # OPTIONAL_SKU_COLS que no vienen en inventario pero sí en ventas (p.ej. proveedor a nivel venta).
+    en_ventas = [c for c in OPTIONAL_SKU_COLS if c not in inventario.columns and c in ventas_raw.columns]
+    if en_ventas:
+        prov = ventas_raw.group_by("sku").agg([pl.col(c).first() for c in en_ventas])
+        resultados = resultados.join(prov, on="sku", how="left")
+
+    resultados = propagate_extra_dims(resultados, ventas_raw, inventario, load_dim_config())
 
     print(f"Resultados finales: {resultados.shape}")
     print(resultados.group_by("estado_inventario").len())

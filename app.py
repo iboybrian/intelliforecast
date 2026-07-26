@@ -7,6 +7,7 @@ y los muestra en Streamlit. Correr con:  streamlit run app.py
 
 import datetime
 import io
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,19 @@ st.set_page_config(page_title="Forecast de Demanda", page_icon=cargar_favicon(),
 ADI_THRESHOLD = 1.32
 CV2_THRESHOLD = 0.49
 H = 4
+
+# columnas de salida de pipeline.py — nunca ofrecer como "dimensión extra" al elegir columnas
+# en la carga de CSVs (duplicado a propósito, mismo patrón que ADI/CV2_THRESHOLD arriba).
+RESERVED_DIM_COLS = {
+    "unique_id", "adi", "cv2", "clasificacion", "modelo_ganador", "mase",
+    "existencia_prorrateada", "pack", "lead_time_dias",
+    "forecast_mensual_promedio", "demanda_diaria_promedio", "doh", "wos", "moh",
+    "estado_inventario", "demanda_lead_time", "cantidad_reorden",
+    *[f"forecast_w{i}" for i in range(1, H + 1)], *[f"fecha_w{i}" for i in range(1, H + 1)],
+}
+VENTAS_REQUIRED_COLS = {"sku", "fecha", "cantidad", "centro_distribucion"}
+INVENTARIO_REQUIRED_COLS = {"sku", "existencia", "pack", "lead_time_dias"}
+FIXED_SKU_COLS = {"proveedor", "categoria"}  # OPTIONAL_SKU_COLS de pipeline.py — mecanismo aparte
 
 # ---------------------------------------------------------------- Paleta (IntelliVet)
 BG_DARK = "#0E1B2E"
@@ -78,6 +92,9 @@ STRINGS = {
         "upload_inventario_label": "Inventario (CSV)",
         "upload_help": "Mismas columnas que el formato actual — ventas: sku, fecha, cantidad, centro_distribucion · inventario: sku, existencia, pack, lead_time_dias.",
         "upload_button": "Procesar",
+        "dims_ventas_label": "Dimensiones adicionales (ventas)",
+        "dims_inventario_label": "Dimensiones adicionales (inventario)",
+        "add_filters_label": "➕ Agregar filtros",
         "upload_processing": "Procesando datos y recalculando forecast…",
         "upload_success": "Datos actualizados.",
         "upload_error": "Error al procesar los archivos:",
@@ -167,6 +184,9 @@ STRINGS = {
         "upload_inventario_label": "Inventory (CSV)",
         "upload_help": "Same columns as the current format — sales: sku, fecha, cantidad, centro_distribucion · inventory: sku, existencia, pack, lead_time_dias.",
         "upload_button": "Process",
+        "dims_ventas_label": "Additional dimensions (sales)",
+        "dims_inventario_label": "Additional dimensions (inventory)",
+        "add_filters_label": "➕ Add filters",
         "upload_processing": "Processing data and recalculating forecast…",
         "upload_success": "Data updated.",
         "upload_error": "Error processing files:",
@@ -390,8 +410,23 @@ def load():
     return res, hist
 
 
-def procesar_archivos(ventas_file, inventario_file):
+def load_dim_config():
+    """Config de dimensiones extra elegidas al subir CSVs. No cacheado: archivo trivial,
+    se regenera en cada 'Procesar'."""
+    ruta = Path(__file__).parent / "dimensiones.json"
+    if not ruta.exists():
+        return []
+    return json.loads(ruta.read_text(encoding="utf-8"))
+
+
+def procesar_archivos(ventas_file, inventario_file, dims_v, dims_i):
     base = Path(__file__).parent
+    config = []
+    for cols, origen in [(dims_v, "ventas"), (dims_i, "inventario")]:
+        for col in cols:
+            config.append({"columna": col, "origen": origen, "label": col})  # label = header
+    # se escribe SIEMPRE (incluso []) para no dejar dimensiones de una carga anterior colgadas.
+    (base / "dimensiones.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
     (base / "ventas_historicas.csv").write_bytes(ventas_file.getvalue())
     (base / "inventario.csv").write_bytes(inventario_file.getvalue())
     return subprocess.run(
@@ -432,9 +467,28 @@ with st.sidebar.expander(TXT["upload_title"]):
     ventas_file = st.file_uploader(TXT["upload_ventas_label"], type="csv", key="upload_ventas")
     inventario_file = st.file_uploader(TXT["upload_inventario_label"], type="csv", key="upload_inventario")
     st.caption(TXT["upload_help"])
+
+    def _cols(file, excluir):
+        if file is None:
+            return []
+        cols = pl.read_csv(io.BytesIO(file.getvalue()), n_rows=0).columns
+        return [c for c in cols if c not in excluir]
+
+    cand_v = _cols(ventas_file, VENTAS_REQUIRED_COLS | FIXED_SKU_COLS | RESERVED_DIM_COLS)
+    cand_i = _cols(inventario_file, INVENTARIO_REQUIRED_COLS | FIXED_SKU_COLS | RESERVED_DIM_COLS)
+
+    # key por identidad de archivo: evita StreamlitAPIException al cambiar de archivo (selección
+    # previa contra opciones nuevas) — arranca vacío por archivo.
+    dims_v_sel = st.multiselect(
+        TXT["dims_ventas_label"], cand_v, key=f"dims_ventas_{ventas_file.name}_{ventas_file.size}"
+    ) if cand_v else []
+    dims_i_sel = st.multiselect(
+        TXT["dims_inventario_label"], cand_i, key=f"dims_inventario_{inventario_file.name}_{inventario_file.size}"
+    ) if cand_i else []
+
     if st.button(TXT["upload_button"], disabled=not (ventas_file and inventario_file)):
         with st.spinner(TXT["upload_processing"]):
-            resultado = procesar_archivos(ventas_file, inventario_file)
+            resultado = procesar_archivos(ventas_file, inventario_file, dims_v_sel, dims_i_sel)
         if resultado.returncode == 0:
             st.cache_data.clear()
             st.success(TXT["upload_success"])
@@ -484,6 +538,18 @@ if "proveedor" in res.columns and proveedor_sel != TXT["all"]:
     res_f = res_f.filter(pl.col("proveedor") == proveedor_sel)
 if "categoria" in res.columns and categoria_sel != TXT["all"]:
     res_f = res_f.filter(pl.col("categoria") == categoria_sel)
+
+dim_config = [d for d in load_dim_config() if d["columna"] in res.columns]
+if dim_config:
+    # label = nombre de columna; colisión solo si misma columna viene de ambos CSV — last-wins.
+    por_label = {d["label"]: d for d in dim_config}
+    elegidas = st.multiselect(TXT["add_filters_label"], sorted(por_label), default=[])
+    if elegidas:
+        for c, label in zip(st.columns(len(elegidas)), elegidas):
+            entry = por_label[label]
+            val_sel = filtro_opcional(c, entry["columna"], label)
+            if val_sel != TXT["all"]:
+                res_f = res_f.filter(pl.col(entry["columna"]) == val_sel)
 
 if res_f.height == 0:
     st.warning(TXT["no_data_filter"])
