@@ -9,11 +9,18 @@ MASE, genera forecast de 4 meses y calcula KPIs de inventario.
 Ventas historicas vienen semanales pero se agregan a nivel mensual antes
 de clasificar/pronosticar (ver aggregate_monthly).
 
+Los CSV pueden traer cualquier nombre de columna: carga.json (escrito por app.py)
+mapea destino -> origen. Sin carga.json usa los nombres canonicos en espanol.
+
 Salida: resultados.parquet (tabla de resultados + KPIs) e historico.parquet
 (serie historica larga, para graficar en el dashboard).
 """
 
+import json
 import sys
+import tempfile
+from datetime import date
+from pathlib import Path
 
 import polars as pl
 from statsforecast import StatsForecast
@@ -32,8 +39,19 @@ CV2_THRESHOLD = 0.49
 
 LEAD_TIME_BUFFER = 1.5    # cantidad_reorden cubre 1.5x el lead time (colchon de seguridad)
 
-# columnas opcionales a nivel SKU en inventario.csv; se propagan a resultados si existen.
-OPTIONAL_SKU_COLS = ["proveedor", "categoria"]
+MIN_TRAIN = 4             # piso de puntos de entrenamiento en la ventana mas temprana del CV
+# series con menos de esto no alcanzan para el rolling origin -> forecast_corto()
+MIN_PERIODOS = H + STEP_SIZE * (N_WINDOWS - 1) + MIN_TRAIN
+
+# columnas requeridas por lado; el resto del CSV puede venir como dimension extra.
+REQ = {
+    "ventas": ["sku", "centro_distribucion", "fecha", "cantidad"],
+    "inventario": ["sku", "existencia"],
+}
+# pack y lead_time_dias son opcionales: si el CSV no los trae (o el SKU no esta en
+# inventario) se rellenan con esto, pisable desde la UI via carga.json["defaults"].
+# OJO: un lead_time inventado produce un estado_inventario inventado — calibrar con el negocio.
+INV_DEFAULTS = {"existencia": 0.0, "pack": 1.0, "lead_time_dias": 30.0}
 
 # names se derivan con str(m) — es el mismo alias que statsforecast usa para nombrar columnas.
 FAMILIES = {
@@ -49,23 +67,73 @@ FAMILIES = {
 }
 
 
-def load_data():
-    ventas = pl.read_csv("ventas_historicas.csv", try_parse_dates=True)
-    ventas = ventas.with_columns(
-        (pl.col("sku") + "|" + pl.col("centro_distribucion")).alias("unique_id")
-    )
-    inventario = pl.read_csv("inventario.csv")
-    return ventas, inventario
+def load_config(path="carga.json"):
+    """Mapeo de columnas + dimensiones elegidas en app.py. Sin archivo -> {} (compat con
+    `python pipeline.py` a secas: mapeo identidad y dimensiones auto-descubiertas)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
 
 
-def aggregate_monthly(ventas: pl.DataFrame) -> pl.DataFrame:
-    """Suma cantidad semanal por mes calendario (mes-inicio)."""
-    return (
-        ventas.with_columns(pl.col("fecha").dt.truncate("1mo").alias("fecha"))
+def scan_lado(path, cfg, requeridas, opcionales=()):
+    """scan_csv + proyeccion segun el mapeo de la UI. -> (LazyFrame, dims).
+
+    select(alias) en vez de rename: habilita projection pushdown (polars parsea solo las
+    columnas mapeadas, no las 1.5M filas completas) y evita colisiones si el CSV ya trae
+    un header con el nombre destino."""
+    fmt = cfg.get("formato_fecha") or "auto"
+    lf = pl.scan_csv(path, try_parse_dates=(fmt == "auto"))
+    disponibles = lf.collect_schema().names()          # lee solo el header
+    mapa = {d: o for d, o in (cfg.get("columnas") or {}).items() if o in disponibles}
+    for c in (*requeridas, *opcionales):               # nombre canonico en el CSV -> mapeo identidad
+        if c in disponibles:
+            mapa.setdefault(c, c)
+    faltan = [c for c in requeridas if c not in mapa]
+    if faltan:
+        raise SystemExit(f"{path}: faltan columnas requeridas {faltan} (columnas del archivo: {disponibles})")
+    # con config de la UI las dims son las elegidas; sin config, todo lo que sobra.
+    candidatas = cfg.get("dimensiones") or [] if cfg.get("columnas") else disponibles
+    dims = [d for d in candidatas if d in disponibles and d not in mapa.values()]
+    lf = lf.select([pl.col(o).alias(d) for d, o in mapa.items()] + [pl.col(d) for d in dims])
+    if "fecha" in mapa and fmt != "auto":
+        lf = lf.with_columns(pl.col("fecha").str.to_date(fmt, strict=False))
+    return lf, dims
+
+
+def load_data(cfg=None):
+    cfg = cfg or {}
+    lf_ventas, dims_v = scan_lado("ventas_historicas.csv", cfg.get("ventas", {}), REQ["ventas"])
+    lf_inv, dims_i = scan_lado("inventario.csv", cfg.get("inventario", {}), REQ["inventario"],
+                               opcionales=("pack", "lead_time_dias"))
+    inventario = lf_inv.with_columns(pl.col("sku").cast(pl.String)).collect()
+    return lf_ventas, dims_v, inventario, dims_i
+
+
+def aggregate_monthly(lf: pl.LazyFrame, dims: list) -> pl.DataFrame:
+    """Suma cantidad por mes calendario (mes-inicio). Unico collect del lado ventas:
+    despues de aca todo trabaja sobre n_series x n_meses, no sobre el CSV crudo."""
+    mensual = (
+        lf.with_columns(
+            # llaves siempre string: un CSV con sku/centro numericos rompe el concat y el join.
+            pl.col("sku", "centro_distribucion").cast(pl.String),
+            pl.col("fecha").dt.truncate(FREQ),
+            pl.col("cantidad").cast(pl.Float64, strict=False),
+        )
+        .with_columns((pl.col("sku") + "|" + pl.col("centro_distribucion")).alias("unique_id"))
+        # las dims NUNCA van en la llave del group_by: partirian la serie en k filas por mes
+        # y statsforecast pronosticaria basura sin avisar.
         .group_by(["unique_id", "sku", "centro_distribucion", "fecha"])
-        .agg(pl.col("cantidad").sum())
+        .agg(pl.col("cantidad").sum(), *[pl.col(d).drop_nulls().first() for d in dims])
         .sort(["unique_id", "fecha"])
+        .collect()
     )
+    # las fechas ilegibles caen en un bucket null: se cuentan en la misma pasada, sin re-escanear.
+    malas = mensual.filter(pl.col("fecha").is_null())["cantidad"].sum()
+    if malas:
+        print(f"AVISO: {malas:,.0f} unidades con fecha ilegible descartadas (revisar formato de fecha)")
+    return mensual.filter(pl.col("fecha").is_not_null())
 
 
 def classify_demand(ventas: pl.DataFrame) -> pl.DataFrame:
@@ -90,14 +158,26 @@ def classify_demand(ventas: pl.DataFrame) -> pl.DataFrame:
           .otherwise(pl.lit("Lumpy"))
           .alias("clasificacion")
     )
-    return stats.select(["unique_id", "sku", "centro_distribucion", "adi", "cv2", "clasificacion"])
+    stats = stats.with_columns((pl.col("n_periodos") < MIN_PERIODOS).alias("flag_serie_corta"))
+    return stats.select(["unique_id", "sku", "centro_distribucion", "n_periodos", "flag_serie_corta",
+                         "adi", "cv2", "clasificacion"])
+
+
+def _mase_valido(col="mase"):
+    """MASE null (escala 0 por train constante) o NaN nunca puede ganar el sort: polars ordena
+    los null PRIMERO, asi que sin esto el peor modelo gana. Tambien evita que app.py reviente
+    formateando un None con f'{mase:.2f}'."""
+    return pl.col(col).fill_nan(None).fill_null(float("inf"))
 
 
 def backtest_and_forecast(df_family: pl.DataFrame, models, model_names) -> pl.DataFrame:
     """Cross-validation temporal (rolling origin) + MASE + forecast final del ganador."""
     sf_df = df_family.rename({"fecha": "ds", "cantidad": "y"}).select(["unique_id", "ds", "y"])
 
-    sf = StatsForecast(models=models, freq=FREQ)
+    # n_jobs=-1: mismos numeros, ~3x mas rapido. fallback_model: si un modelo revienta en una
+    # serie puntual, esa serie no tumba la corrida entera.
+    sf = StatsForecast(models=models, freq=FREQ, n_jobs=-1,
+                       fallback_model=SeasonalNaive(season_length=1))
     cv = sf.cross_validation(h=H, df=sf_df, n_windows=N_WINDOWS, step_size=STEP_SIZE)
 
     # MASE no estacional (seasonality=1): mas robusto que m=52 para series cortas/intermitentes.
@@ -110,56 +190,103 @@ def backtest_and_forecast(df_family: pl.DataFrame, models, model_names) -> pl.Da
     mase_long = mase_avg.unpivot(index="unique_id", on=model_names,
                                   variable_name="modelo", value_name="mase")
     winners = (
-        mase_long.sort("mase").group_by("unique_id", maintain_order=True).first()
+        mase_long.with_columns(_mase_valido()).sort("mase")
+        .group_by("unique_id", maintain_order=True).first()
         .rename({"modelo": "modelo_ganador"})
     )
 
-    forecast_all = sf.forecast(h=H, df=sf_df)
-    forecast_long = forecast_all.unpivot(index=["unique_id", "ds"], on=model_names,
-                                          variable_name="modelo", value_name="valor")
-    forecast_winner = forecast_long.join(
-        winners.select(["unique_id", "modelo_ganador"]),
-        left_on=["unique_id", "modelo"], right_on=["unique_id", "modelo_ganador"], how="inner"
-    )
+    # refit final solo del modelo ganador de cada serie: el sf.forecast() sobre historia completa
+    # es ~45% del wall clock y hoy fitea 4 modelos por serie para descartar 3. Mismos numeros.
+    trozos = []
+    for modelo, grupo in winners.group_by("modelo_ganador"):
+        nombre = modelo[0] if isinstance(modelo, tuple) else modelo
+        modelo_obj = next(m for m in models if str(m) == nombre)
+        sub = sf_df.filter(pl.col("unique_id").is_in(grupo["unique_id"].implode()))
+        sf_uno = StatsForecast(models=[modelo_obj], freq=FREQ, n_jobs=-1,
+                               fallback_model=SeasonalNaive(season_length=1))
+        trozos.append(sf_uno.forecast(h=H, df=sub).select(
+            "unique_id", "ds", pl.col(nombre).alias("valor")))
+    forecast_winner = pl.concat(trozos, how="vertical_relaxed")
 
-    forecast_wide = (
+    ancho = (
         forecast_winner.sort(["unique_id", "ds"])
-        .with_columns(pl.col("ds").cum_count().over("unique_id").alias("semana_n"))
-        .pivot(index="unique_id", on="semana_n", values="valor")
-        .rename({str(i): f"forecast_w{i}" for i in range(1, H + 1)})
+        .with_columns(pl.col("ds").cum_count().over("unique_id").alias("mes_n"))
     )
-    fechas_wide = (
-        forecast_winner.sort(["unique_id", "ds"])
-        .with_columns(pl.col("ds").cum_count().over("unique_id").alias("semana_n"))
-        .pivot(index="unique_id", on="semana_n", values="ds")
-        .rename({str(i): f"fecha_w{i}" for i in range(1, H + 1)})
-    )
+    forecast_wide = (ancho.pivot(index="unique_id", on="mes_n", values="valor")
+                     .rename({str(i): f"forecast_w{i}" for i in range(1, H + 1)}))
+    fechas_wide = (ancho.pivot(index="unique_id", on="mes_n", values="ds")
+                   .with_columns(pl.col(f"{i}").cast(pl.Date) for i in range(1, H + 1))
+                   .rename({str(i): f"fecha_w{i}" for i in range(1, H + 1)}))
 
     return winners.join(forecast_wide, on="unique_id").join(fechas_wide, on="unique_id")
 
 
+def forecast_corto(ventas: pl.DataFrame) -> pl.DataFrame:
+    """Series con < MIN_PERIODOS meses: no alcanzan para el rolling origin (statsforecast
+    revienta antes de instanciar el modelo). SeasonalNaive degenerado (season_length=1 = ultimo
+    valor; la estacionalidad anual no es estimable con tan poca historia), en polars puro para
+    que no pueda lanzar excepcion. MASE de holdout de 1 punto: NO es comparable con el MASE de
+    3 ventanas/h=4 de las series largas — por eso existe flag_serie_corta."""
+    train = pl.col("cantidad").slice(0, pl.max_horizontal(pl.len() - 1, pl.lit(1)))
+    g = ventas.sort(["unique_id", "fecha"]).group_by("unique_id").agg(
+        pl.col("cantidad").last().alias("y_test"),
+        train.last().alias("valor"),
+        train.diff().abs().mean().alias("escala"),
+        pl.col("fecha").last().alias("ultima"),
+    )
+    return (
+        g.with_columns(((pl.col("y_test") - pl.col("valor")).abs() / pl.col("escala")).alias("mase"))
+        .with_columns(_mase_valido())
+        .select("unique_id", pl.lit("SeasonalNaive").alias("modelo_ganador"), "mase",
+                *[pl.col("valor").cast(pl.Float32).alias(f"forecast_w{i}") for i in range(1, H + 1)],
+                *[pl.col("ultima").dt.offset_by(f"{i}mo").cast(pl.Date).alias(f"fecha_w{i}")
+                  for i in range(1, H + 1)])
+    )
+
+
 def build_forecast_table(ventas: pl.DataFrame, clasif: pl.DataFrame) -> pl.DataFrame:
     resultados = []
-    for fam_cfg in FAMILIES.values():
-        ids = clasif.filter(pl.col("clasificacion").is_in(fam_cfg["clases"]))["unique_id"].to_list()
-        if ids:
-            fam = ventas.filter(pl.col("unique_id").is_in(ids))
-            names = [str(m) for m in fam_cfg["models"]]
-            resultados.append(backtest_and_forecast(fam, fam_cfg["models"], names))
+    cortas = clasif.filter(pl.col("flag_serie_corta"))["unique_id"]
+    if cortas.len():
+        print(f"[3/5] {cortas.len():,} series cortas (<{MIN_PERIODOS} meses) -> SeasonalNaive")
+        resultados.append(forecast_corto(ventas.filter(pl.col("unique_id").is_in(cortas.implode()))))
 
-    forecast_tabla = pl.concat(resultados, how="vertical")
+    for fam, fam_cfg in FAMILIES.items():
+        ids = clasif.filter(pl.col("clasificacion").is_in(fam_cfg["clases"])
+                            & ~pl.col("flag_serie_corta"))["unique_id"]
+        if ids.len():
+            print(f"[3/5] Backtesting {ids.len():,} series de familia {fam}...")
+            sub = ventas.filter(pl.col("unique_id").is_in(ids.implode()))
+            names = [str(m) for m in fam_cfg["models"]]
+            resultados.append(backtest_and_forecast(sub, fam_cfg["models"], names))
+
+    forecast_tabla = pl.concat(resultados, how="vertical_relaxed")
     return clasif.join(forecast_tabla, on="unique_id")
 
 
-def prorratear_existencia(ventas: pl.DataFrame, inventario: pl.DataFrame) -> pl.DataFrame:
-    """Reparte la existencia a nivel SKU entre sus CDs, proporcional al historico de ventas."""
+def prorratear_existencia(ventas: pl.DataFrame, inventario: pl.DataFrame, defaults) -> pl.DataFrame:
+    """Reparte la existencia a nivel SKU entre sus CDs, proporcional al historico de ventas.
+
+    Join LEFT: un SKU con ventas y sin fila en inventario conserva su forecast y entra con
+    existencia 0 (-> Riesgo de quiebre). Dejarlo null lo etiquetaria "Normal" en silencio,
+    porque un when() con condicion nula cae en el otherwise."""
     ventas_por_cd = ventas.group_by(["sku", "centro_distribucion"]).agg(
         pl.col("cantidad").sum().alias("ventas_totales_cd")
     )
     ventas_por_sku = ventas_por_cd.group_by("sku").agg(
         pl.col("ventas_totales_cd").sum().alias("ventas_totales_sku")
     )
-    prorrateo = ventas_por_cd.join(ventas_por_sku, on="sku").join(inventario, on="sku")
+    sin_inv = ventas_por_sku.join(inventario.select("sku"), on="sku", how="anti").height
+    if sin_inv:
+        print(f"AVISO: {sin_inv:,} SKU con ventas y sin registro en inventario -> existencia 0")
+
+    prorrateo = ventas_por_cd.join(ventas_por_sku, on="sku").join(inventario, on="sku", how="left")
+    # una sola expresion cubre los dos huecos: columna nunca mapeada (pl.lit) y SKU ausente
+    # del inventario (fill_null despues del left join).
+    prorrateo = prorrateo.with_columns([
+        (pl.col(k) if k in prorrateo.columns else pl.lit(v)).cast(pl.Float64).fill_null(v).alias(k)
+        for k, v in defaults.items()
+    ])
     prorrateo = prorrateo.with_columns(
         pl.when(pl.col("ventas_totales_sku") > 0)
           .then(pl.col("existencia") * pl.col("ventas_totales_cd") / pl.col("ventas_totales_sku"))
@@ -169,8 +296,8 @@ def prorratear_existencia(ventas: pl.DataFrame, inventario: pl.DataFrame) -> pl.
     return prorrateo.select(["sku", "centro_distribucion", "existencia_prorrateada", "pack", "lead_time_dias"])
 
 
-def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.DataFrame) -> pl.DataFrame:
-    prorrateo = prorratear_existencia(ventas, inventario)
+def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.DataFrame, defaults) -> pl.DataFrame:
+    prorrateo = prorratear_existencia(ventas, inventario, defaults)
     tabla = tabla.join(prorrateo, on=["sku", "centro_distribucion"])
 
     forecast_cols = [f"forecast_w{i}" for i in range(1, H + 1)]
@@ -211,35 +338,98 @@ def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.Data
     return tabla
 
 
+def unir_dimensiones(resultados, mensual, inventario, dims_v, dims_i):
+    """Dimensiones extra al parquet de resultados. Las de ventas salen de `mensual` (no del CSV
+    crudo: seria una segunda pasada sobre 1.5M filas) y se unen por sku+centro_distribucion, que
+    es el grano de resultados — a nivel sku se tomaria el valor de un CD arbitrario.
+    Nunca pisa una columna existente."""
+    nuevas_v = [d for d in dims_v if d not in resultados.columns]
+    if nuevas_v:
+        for d in nuevas_v:
+            variables = mensual.group_by(["sku", "centro_distribucion"]).agg(
+                pl.col(d).n_unique().alias("n")).filter(pl.col("n") > 1).height
+            if variables:
+                print(f"AVISO: la dimension '{d}' tiene varios valores dentro de un mismo SKU-CD "
+                      f"({variables:,} casos, dato transaccional?); se toma el primero")
+        por_grupo = mensual.group_by(["sku", "centro_distribucion"]).agg(
+            [pl.col(d).drop_nulls().first() for d in nuevas_v])
+        resultados = resultados.join(por_grupo, on=["sku", "centro_distribucion"], how="left")
+
+    nuevas_i = [d for d in dims_i if d not in resultados.columns]
+    if nuevas_i:
+        resultados = resultados.join(inventario.select(["sku", *nuevas_i]).unique("sku"),
+                                     on="sku", how="left")
+    return resultados
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
-    ventas, inventario = load_data()
-    ventas = aggregate_monthly(ventas)
+    cfg = load_config()
+    defaults = {**INV_DEFAULTS, **{k: float(v) for k, v in cfg.get("defaults", {}).items()}}
+
+    print("[1/5] Leyendo CSV y agregando a mensual...")
+    lf_ventas, dims_v, inventario, dims_i = load_data(cfg)
+    ventas = aggregate_monthly(lf_ventas, dims_v)
     print(f"Ventas (mensual): {ventas.shape}, Inventario: {inventario.shape}")
 
+    print("[2/5] Clasificando demanda...")
     clasif = classify_demand(ventas)
-    print("Clasificacion de demanda:")
     print(clasif.group_by("clasificacion").len().sort("clasificacion"))
 
     tabla = build_forecast_table(ventas, clasif)
-    print(f"Tabla de forecast: {tabla.shape}")
+    print(f"[4/5] Tabla de forecast: {tabla.shape}")
 
-    resultados = calcular_kpis(tabla, ventas, inventario)
+    resultados = calcular_kpis(tabla, ventas, inventario, defaults)
+    resultados = unir_dimensiones(resultados, ventas, inventario, dims_v, dims_i)
 
-    presentes = [c for c in OPTIONAL_SKU_COLS if c in inventario.columns]
-    if presentes:
-        resultados = resultados.join(inventario.select(["sku", *presentes]).unique("sku"), on="sku", how="left")
-
-    print(f"Resultados finales: {resultados.shape}")
+    print(f"[5/5] Resultados finales: {resultados.shape}")
     print(resultados.group_by("estado_inventario").len())
 
     resultados.write_parquet("resultados.parquet")
-    ventas.select(["unique_id", "sku", "centro_distribucion", "fecha", "cantidad"]).write_parquet("historico.parquet")
+    ventas.write_parquet("historico.parquet")
     print("Guardado: resultados.parquet, historico.parquet")
 
 
+def _check():
+    """Self-check del ETL: mapeo de columnas, formato de fecha, agregacion mensual, dimension
+    que no parte la serie, series cortas sin NaN, y MASE null que no gana."""
+    crudo = ("Codigo,Bodega,FechaDoc,Unidades,Linea\n"
+             "A,N,01/02/2024,5,X\n"
+             "A,N,15/02/2024,7,X\n"
+             "A,S,03/01/2024,1,\n")
+    cfg = {"columnas": {"sku": "Codigo", "centro_distribucion": "Bodega",
+                        "fecha": "FechaDoc", "cantidad": "Unidades"},
+           "formato_fecha": "%d/%m/%Y", "dimensiones": ["Linea"]}
+    with tempfile.TemporaryDirectory() as tmp:
+        csv = Path(tmp) / "v.csv"
+        csv.write_text(crudo, encoding="utf-8")
+        lf, dims = scan_lado(csv, cfg, REQ["ventas"])
+        assert dims == ["Linea"], dims
+        mensual = aggregate_monthly(lf, dims)
+
+    a = mensual.filter(pl.col("unique_id") == "A|N")
+    # 01/02/2024 es 1-feb en DD/MM y 2-ene en MM/DD: con el formato equivocado las dos filas
+    # de febrero caen en meses distintos y estos tres asserts se caen juntos.
+    assert a["fecha"].to_list() == [date(2024, 2, 1)], a["fecha"].to_list()
+    assert a["cantidad"].to_list() == [12.0], a["cantidad"].to_list()
+    assert a.height == 1, "la dimension partio la serie"
+    assert a["Linea"].to_list() == ["X"]
+
+    corto = forecast_corto(mensual)
+    assert corto["mase"].is_null().sum() == 0 and corto["mase"].is_nan().sum() == 0
+    assert corto["forecast_w4"].null_count() == 0
+    # con historia suficiente para un holdout, el MASE es finito: |20-12| / mean|diff|
+    seis = pl.DataFrame({"unique_id": ["B"] * 6, "cantidad": [10.0, 12, 11, 13, 12, 20],
+                         "fecha": [date(2024, m, 1) for m in range(1, 7)]})
+    assert abs(forecast_corto(seis)["mase"][0] - 8 / 1.5) < 1e-9
+
+    d = pl.DataFrame({"modelo": ["X", "Y"], "mase": [None, 2.0]})
+    assert d.with_columns(_mase_valido()).sort("mase")["modelo"][0] == "Y", "el MASE null gano"
+    print("check OK")
+
+
 if __name__ == "__main__":
-    main()
+    _check() if "--check" in sys.argv else main()

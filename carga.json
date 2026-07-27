@@ -1,0 +1,31 @@
+{
+ "ventas": {
+  "columnas": {
+   "sku": "SKU_Coded",
+   "centro_distribucion": "Store_Number",
+   "fecha": "Sold_Date",
+   "cantidad": "Qty_Sold"
+  },
+  "formato_fecha": "%Y-%m-%d",
+  "dimensiones": [
+   "Product_Class_Code",
+   "Total_Sale_Value",
+   "On_Promo"
+  ]
+ },
+ "inventario": {
+  "columnas": {
+   "sku": "SKU_Coded",
+   "existencia": "Stock",
+   "lead_time_dias": "Lead_Time"
+  },
+  "dimensiones": [
+   "Avg_Sales",
+   "CD"
+  ]
+ },
+ "defaults": {
+  "pack": 1,
+  "lead_time_dias": 30
+ }
+}
