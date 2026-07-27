@@ -5,9 +5,11 @@ Consume resultados.parquet + historico.parquet (generados por pipeline.py)
 y los muestra en Streamlit. Correr con:  streamlit run app.py
 """
 
+import csv
 import datetime
 import io
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -41,14 +43,25 @@ H = 4
 # en la carga de CSVs (duplicado a propósito, mismo patrón que ADI/CV2_THRESHOLD arriba).
 RESERVED_DIM_COLS = {
     "unique_id", "adi", "cv2", "clasificacion", "modelo_ganador", "mase",
-    "existencia_prorrateada", "pack", "lead_time_dias",
+    "existencia", "existencia_prorrateada", "pack", "lead_time_dias",
+    "n_periodos", "flag_serie_corta",
     "forecast_mensual_promedio", "demanda_diaria_promedio", "doh", "wos", "moh",
     "estado_inventario", "demanda_lead_time", "cantidad_reorden",
     *[f"forecast_w{i}" for i in range(1, H + 1)], *[f"fecha_w{i}" for i in range(1, H + 1)],
 }
-VENTAS_REQUIRED_COLS = {"sku", "fecha", "cantidad", "centro_distribucion"}
-INVENTARIO_REQUIRED_COLS = {"sku", "existencia", "pack", "lead_time_dias"}
-FIXED_SKU_COLS = {"proveedor", "categoria"}  # OPTIONAL_SKU_COLS de pipeline.py — mecanismo aparte
+# orden fijo: define el orden de los selectbox de mapeo (un set los desordenaria en cada rerun)
+VENTAS_REQUIRED_COLS = ["sku", "centro_distribucion", "fecha", "cantidad"]
+INVENTARIO_REQUIRED_COLS = ["sku", "existencia"]
+# opcionales: si el CSV no las trae, pipeline.py usa el default del number_input
+INVENTARIO_OPCIONALES = {"pack": 1, "lead_time_dias": 30}
+
+FORMATOS_FECHA = {"Auto": "auto", "YYYY-MM-DD": "%Y-%m-%d",
+                  "DD/MM/YYYY": "%d/%m/%Y", "MM/DD/YYYY": "%m/%d/%Y"}
+
+# arriba de este umbral de series se pide confirmacion antes de lanzar el pipeline:
+# con AutoARIMA exhaustivo la corrida puede durar horas y bloquea la app entera.
+UMBRAL_SERIES = 2000
+SEGUNDOS_POR_SERIE = 0.3
 
 # ---------------------------------------------------------------- Paleta (IntelliVet)
 BG_DARK = "#0E1B2E"
@@ -90,7 +103,7 @@ STRINGS = {
         "upload_title": "📤 Cargar tus datos",
         "upload_ventas_label": "Ventas históricas (CSV)",
         "upload_inventario_label": "Inventario (CSV)",
-        "upload_help": "Mismas columnas que el formato actual — ventas: sku, fecha, cantidad, centro_distribucion · inventario: sku, existencia, pack, lead_time_dias.",
+        "upload_help": "Cualquier CSV sirve: abajo se elige qué columna del archivo corresponde a cada campo.",
         "upload_button": "Procesar",
         "dims_ventas_label": "Dimensiones adicionales (ventas)",
         "dims_inventario_label": "Dimensiones adicionales (inventario)",
@@ -98,6 +111,22 @@ STRINGS = {
         "upload_processing": "Procesando datos y recalculando forecast…",
         "upload_success": "Datos actualizados.",
         "upload_error": "Error al procesar los archivos:",
+        "map_help": "Elegí de qué columna de tu CSV sale cada campo:",
+        "upload_missing": "Faltan columnas requeridas:",
+        "map_placeholder": "— elegir —",
+        "map_no_disponible": "— no está en el CSV —",
+        "map_ventas_title": "**Ventas — campos obligatorios**",
+        "map_inventario_title": "**Inventario — campos obligatorios**",
+        "map_inventario_opc": "**Inventario — opcionales**",
+        "map_fecha_formato": "Formato de fecha",
+        "map_dup_error": "Una misma columna está asignada a dos campos distintos.",
+        "map_incompleto": "Faltan campos por asignar.",
+        "inv_opcional_help": "Si el CSV no trae la columna, se usa el valor de abajo para esos SKUs.",
+        "pack_default_label": "Pack por defecto",
+        "lead_time_default_label": "Lead time por defecto (días)",
+        "preflight_warning": "{n:,} series a pronosticar (~{min:,.0f} min). La app queda bloqueada durante la corrida.",
+        "preflight_cli": "Para no bloquear la app, correr en una terminal:",
+        "preflight_run_anyway": "Correr igual",
         "no_data_filter": "Ninguna combinación cumple los filtros seleccionados.",
         "cd_label": "Centro de distribución",
         "clase_label": "Tipo de SKU",
@@ -156,6 +185,7 @@ STRINGS = {
         "chart_yaxis": "Cantidad (mensual)",
         "chart_title": "{sku} · {cd} — histórico + {h} meses de forecast",
         "winner_caption": "Modelo ganador **{modelo}** seleccionado por menor MASE (**{mase:.2f}**) en backtesting con cross-validation temporal (rolling origin).",
+        "short_series_caption": "⚠️ Serie corta: solo **{n}** meses de historia, insuficiente para backtesting. Se usa **SeasonalNaive** (último valor) y el MASE no es comparable con el del resto.",
         "risk_header": "SKUs en riesgo de quiebre",
         "risk_caption": "Ordenados por urgencia (menor DOH primero). Ámbito: **{scope}** · {n} combinaciones.",
         "risk_search": "Buscar SKU",
@@ -182,7 +212,7 @@ STRINGS = {
         "upload_title": "📤 Upload your data",
         "upload_ventas_label": "Sales history (CSV)",
         "upload_inventario_label": "Inventory (CSV)",
-        "upload_help": "Same columns as the current format — sales: sku, fecha, cantidad, centro_distribucion · inventory: sku, existencia, pack, lead_time_dias.",
+        "upload_help": "Any CSV works: below you pick which column of your file maps to each field.",
         "upload_button": "Process",
         "dims_ventas_label": "Additional dimensions (sales)",
         "dims_inventario_label": "Additional dimensions (inventory)",
@@ -190,6 +220,22 @@ STRINGS = {
         "upload_processing": "Processing data and recalculating forecast…",
         "upload_success": "Data updated.",
         "upload_error": "Error processing files:",
+        "map_help": "Pick which column of your CSV maps to each field:",
+        "upload_missing": "Missing required columns:",
+        "map_placeholder": "— pick one —",
+        "map_no_disponible": "— not in the CSV —",
+        "map_ventas_title": "**Sales — required fields**",
+        "map_inventario_title": "**Inventory — required fields**",
+        "map_inventario_opc": "**Inventory — optional**",
+        "map_fecha_formato": "Date format",
+        "map_dup_error": "The same column is assigned to two different fields.",
+        "map_incompleto": "Some fields are still unassigned.",
+        "inv_opcional_help": "If the CSV lacks the column, the value below is used for those SKUs.",
+        "pack_default_label": "Default pack",
+        "lead_time_default_label": "Default lead time (days)",
+        "preflight_warning": "{n:,} series to forecast (~{min:,.0f} min). The app stays blocked during the run.",
+        "preflight_cli": "To avoid blocking the app, run in a terminal:",
+        "preflight_run_anyway": "Run anyway",
         "no_data_filter": "No combination matches the selected filters.",
         "cd_label": "Distribution center",
         "clase_label": "SKU type",
@@ -248,6 +294,7 @@ STRINGS = {
         "chart_yaxis": "Quantity (monthly)",
         "chart_title": "{sku} · {cd} — historical + {h}-month forecast",
         "winner_caption": "Winning model **{modelo}** selected for lowest MASE (**{mase:.2f}**) via temporal cross-validation backtesting (rolling origin).",
+        "short_series_caption": "⚠️ Short series: only **{n}** months of history, not enough for backtesting. Falls back to **SeasonalNaive** (last value); its MASE is not comparable to the rest.",
         "risk_header": "SKUs at stockout risk",
         "risk_caption": "Sorted by urgency (lowest DOH first). Scope: **{scope}** · {n} combinations.",
         "risk_search": "Search SKU",
@@ -411,28 +458,60 @@ def load():
 
 
 def load_dim_config():
-    """Config de dimensiones extra elegidas al subir CSVs. No cacheado: archivo trivial,
-    se regenera en cada 'Procesar'."""
-    ruta = Path(__file__).parent / "dimensiones.json"
+    """Dimensiones extra elegidas al subir los CSVs (carga.json, escrito por escribir_carga).
+    No cacheado: archivo trivial, se regenera en cada 'Procesar'."""
+    ruta = Path(__file__).parent / "carga.json"
     if not ruta.exists():
         return []
-    return json.loads(ruta.read_text(encoding="utf-8"))
+    cfg = json.loads(ruta.read_text(encoding="utf-8"))
+    return [d for lado in ("ventas", "inventario") for d in cfg.get(lado, {}).get("dimensiones", [])]
 
 
-def procesar_archivos(ventas_file, inventario_file, dims_v, dims_i):
+def escribir_carga(ventas_file, inventario_file, mapa_v, mapa_i, dims_v, dims_i, fmt, defaults):
+    """Guarda los CSV crudos (sin parsearlos: 1.5M filas no entran dos veces en RAM) y el
+    carga.json que pipeline.py aplica dentro de scan_csv. -> ruta del CSV de ventas."""
     base = Path(__file__).parent
-    config = []
-    for cols, origen in [(dims_v, "ventas"), (dims_i, "inventario")]:
-        for col in cols:
-            config.append({"columna": col, "origen": origen, "label": col})  # label = header
-    # se escribe SIEMPRE (incluso []) para no dejar dimensiones de una carga anterior colgadas.
-    (base / "dimensiones.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
-    (base / "ventas_historicas.csv").write_bytes(ventas_file.getvalue())
-    (base / "inventario.csv").write_bytes(inventario_file.getvalue())
-    return subprocess.run(
-        [sys.executable, str(base / "pipeline.py")],
-        cwd=base, capture_output=True, text=True,
+    for file, destino in ((ventas_file, "ventas_historicas.csv"), (inventario_file, "inventario.csv")):
+        file.seek(0)
+        with open(base / destino, "wb") as out:
+            shutil.copyfileobj(file, out)
+    cfg = {
+        "ventas": {"columnas": mapa_v, "formato_fecha": fmt, "dimensiones": dims_v},
+        "inventario": {"columnas": mapa_i, "dimensiones": dims_i},
+        "defaults": defaults,
+    }
+    # se escribe SIEMPRE (incluso con dimensiones vacias) para no dejar colgada una carga anterior.
+    (base / "carga.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    return base / "ventas_historicas.csv"
+
+
+def contar_series(ruta_ventas, mapa_v):
+    """Series (sku x centro) del CSV ya escrito. Con pushdown polars lee solo esas 2 columnas."""
+    return (pl.scan_csv(ruta_ventas)
+            .select(pl.struct(mapa_v["sku"], mapa_v["centro_distribucion"]).n_unique())
+            .collect().item())
+
+
+def correr_pipeline():
+    """Lanza pipeline.py y transmite su salida en vivo. -> (returncode, cola del log).
+    stderr fusionado en stdout para que un traceback aparezca en orden con las etapas;
+    -u porque el hijo bufferia por bloques cuando escribe a un pipe."""
+    base = Path(__file__).parent
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(base / "pipeline.py")], cwd=base,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
+    lineas = []
+    with st.status(TXT["upload_processing"], expanded=True) as status:
+        for linea in proc.stdout:
+            lineas.append(linea)
+            status.write(linea.rstrip())
+        proc.wait()
+        ok = proc.returncode == 0
+        status.update(state="complete" if ok else "error",
+                      label=TXT["upload_success"] if ok else TXT["upload_error"])
+    return proc.returncode, "".join(lineas[-60:])
 
 
 def exportar_excel(df_kpi: pl.DataFrame, ids: list[str]) -> bytes:
@@ -444,7 +523,7 @@ def exportar_excel(df_kpi: pl.DataFrame, ids: list[str]) -> bytes:
         .select(["sku", "centro_distribucion", "fecha", "cantidad"])
     )
     buf = io.BytesIO()
-    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True, "nan_inf_to_errors": True})
     df_kpi.write_excel(workbook=wb, worksheet="KPIs")
     hist24.write_excel(workbook=wb, worksheet="Historico 24m")
     wb.close()
@@ -468,34 +547,92 @@ with st.sidebar.expander(TXT["upload_title"]):
     inventario_file = st.file_uploader(TXT["upload_inventario_label"], type="csv", key="upload_inventario")
     st.caption(TXT["upload_help"])
 
-    def _cols(file, excluir):
+    def _headers(file):
+        """Solo la primera linea: el file_uploader ya tiene el archivo entero en RAM y cada
+        widget de mapeo dispara un rerun — un read_csv por rerun seria una copia completa."""
         if file is None:
             return []
-        cols = pl.read_csv(io.BytesIO(file.getvalue()), n_rows=0).columns
-        return [c for c in cols if c not in excluir]
+        file.seek(0)
+        linea = file.readline().decode("utf-8-sig", errors="replace")
+        return next(csv.reader([linea.rstrip("\r\n")]), [])
 
-    cand_v = _cols(ventas_file, VENTAS_REQUIRED_COLS | FIXED_SKU_COLS | RESERVED_DIM_COLS)
-    cand_i = _cols(inventario_file, INVENTARIO_REQUIRED_COLS | FIXED_SKU_COLS | RESERVED_DIM_COLS)
+    def _mapeo(clave, headers, campos, opcional=False):
+        """Un selectbox por campo, siempre visible, preseleccionado al header homonimo.
+        -> {destino: origen}; los campos sin asignar quedan afuera."""
+        vacio = TXT["map_no_disponible"] if opcional else TXT["map_placeholder"]
+        mapa = {}
+        for c in campos:
+            opciones = [vacio] + headers
+            sel = st.selectbox(c, opciones, key=f"map_{clave}_{c}",
+                               index=opciones.index(c) if c in headers else 0)
+            if sel != vacio:
+                mapa[c] = sel
+        return mapa
 
-    # key por identidad de archivo: evita StreamlitAPIException al cambiar de archivo (selección
-    # previa contra opciones nuevas) — arranca vacío por archivo.
-    dims_v_sel = st.multiselect(
-        TXT["dims_ventas_label"], cand_v, key=f"dims_ventas_{ventas_file.name}_{ventas_file.size}"
-    ) if cand_v else []
-    dims_i_sel = st.multiselect(
-        TXT["dims_inventario_label"], cand_i, key=f"dims_inventario_{inventario_file.name}_{inventario_file.size}"
-    ) if cand_i else []
+    head_v, head_i = _headers(ventas_file), _headers(inventario_file)
+    # key por identidad de archivo: evita StreamlitAPIException al cambiar de archivo
+    # (selección previa contra opciones nuevas) — arranca de cero por archivo.
+    id_v = f"{ventas_file.name}_{ventas_file.size}" if ventas_file else "v"
+    id_i = f"{inventario_file.name}_{inventario_file.size}" if inventario_file else "i"
 
-    if st.button(TXT["upload_button"], disabled=not (ventas_file and inventario_file)):
-        with st.spinner(TXT["upload_processing"]):
-            resultado = procesar_archivos(ventas_file, inventario_file, dims_v_sel, dims_i_sel)
-        if resultado.returncode == 0:
-            st.cache_data.clear()
-            st.success(TXT["upload_success"])
-            st.rerun()
-        else:
-            st.error(TXT["upload_error"])
-            st.code(resultado.stderr[-3000:])
+    mapa_v, mapa_i, fmt_sel, defaults = {}, {}, "auto", {}
+    if head_v:
+        st.markdown(TXT["map_ventas_title"])
+        st.caption(TXT["map_help"])
+        mapa_v = _mapeo(id_v, head_v, VENTAS_REQUIRED_COLS)
+        fmt_sel = FORMATOS_FECHA[st.selectbox(TXT["map_fecha_formato"], list(FORMATOS_FECHA),
+                                              key=f"fmt_{id_v}")]
+    if head_i:
+        st.markdown(TXT["map_inventario_title"])
+        mapa_i = _mapeo(id_i, head_i, INVENTARIO_REQUIRED_COLS)
+        st.markdown(TXT["map_inventario_opc"])
+        st.caption(TXT["inv_opcional_help"])
+        mapa_i |= _mapeo(id_i, head_i, list(INVENTARIO_OPCIONALES), opcional=True)
+        defaults = {
+            "pack": st.number_input(TXT["pack_default_label"], min_value=1,
+                                    value=INVENTARIO_OPCIONALES["pack"], key=f"packdef_{id_i}"),
+            "lead_time_dias": st.number_input(TXT["lead_time_default_label"], min_value=1,
+                                              value=INVENTARIO_OPCIONALES["lead_time_dias"],
+                                              key=f"ltdef_{id_i}"),
+        }
+
+    cand_v = [c for c in head_v if c not in RESERVED_DIM_COLS and c not in mapa_v.values()]
+    cand_i = [c for c in head_i if c not in RESERVED_DIM_COLS and c not in mapa_i.values()]
+    dims_v_sel = st.multiselect(TXT["dims_ventas_label"], cand_v, default=cand_v,
+                                key=f"dims_ventas_{id_v}") if cand_v else []
+    dims_i_sel = st.multiselect(TXT["dims_inventario_label"], cand_i, default=cand_i,
+                                key=f"dims_inventario_{id_i}") if cand_i else []
+
+    incompleto = ([f"ventas.{c}" for c in VENTAS_REQUIRED_COLS if c not in mapa_v]
+                  + [f"inventario.{c}" for c in INVENTARIO_REQUIRED_COLS if c not in mapa_i])
+    duplicado = len(set(mapa_v.values())) < len(mapa_v) or len(set(mapa_i.values())) < len(mapa_i)
+    if head_v and head_i and (incompleto or duplicado):
+        st.warning(TXT["map_dup_error"] if duplicado else f"{TXT['map_incompleto']} {', '.join(incompleto)}")
+
+    listo = bool(ventas_file and inventario_file and not incompleto and not duplicado)
+    if st.button(TXT["upload_button"], disabled=not listo):
+        # validado contra el estado de la UI: no se leyo ni una fila de datos todavia.
+        ruta = escribir_carga(ventas_file, inventario_file, mapa_v, mapa_i,
+                              dims_v_sel, dims_i_sel, fmt_sel, defaults)
+        st.session_state["n_series"] = contar_series(ruta, mapa_v)
+
+    n_series = st.session_state.get("n_series")
+    if n_series is not None:
+        arrancar = n_series <= UMBRAL_SERIES
+        if not arrancar:
+            st.warning(TXT["preflight_warning"].format(
+                n=n_series, min=n_series * SEGUNDOS_POR_SERIE / 60))
+            st.caption(TXT["preflight_cli"])
+            st.code("python pipeline.py")
+            arrancar = st.button(TXT["preflight_run_anyway"])
+        if arrancar:
+            del st.session_state["n_series"]
+            codigo, log = correr_pipeline()
+            if codigo == 0:
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.code(log)
 
 res, hist = load()
 if res is None:
@@ -539,17 +676,15 @@ if "proveedor" in res.columns and proveedor_sel != TXT["all"]:
 if "categoria" in res.columns and categoria_sel != TXT["all"]:
     res_f = res_f.filter(pl.col("categoria") == categoria_sel)
 
-dim_config = [d for d in load_dim_config() if d["columna"] in res.columns]
-if dim_config:
-    # label = nombre de columna; colisión solo si misma columna viene de ambos CSV — last-wins.
-    por_label = {d["label"]: d for d in dim_config}
-    elegidas = st.multiselect(TXT["add_filters_label"], sorted(por_label), default=[])
+# dimensiones extra de carga.json: el nombre de la columna es tambien su etiqueta.
+dims_disp = sorted({d for d in load_dim_config() if d in res.columns} - {"proveedor", "categoria"})
+if dims_disp:
+    elegidas = st.multiselect(TXT["add_filters_label"], dims_disp, default=[])
     if elegidas:
-        for c, label in zip(st.columns(len(elegidas)), elegidas):
-            entry = por_label[label]
-            val_sel = filtro_opcional(c, entry["columna"], label)
+        for c, dim in zip(st.columns(len(elegidas)), elegidas):
+            val_sel = filtro_opcional(c, dim, dim)
             if val_sel != TXT["all"]:
-                res_f = res_f.filter(pl.col(entry["columna"]) == val_sel)
+                res_f = res_f.filter(pl.col(dim) == val_sel)
 
 if res_f.height == 0:
     st.warning(TXT["no_data_filter"])
@@ -754,7 +889,12 @@ with tab_overview:
         title=dict(text=TXT["chart_title"].format(sku=sku_sel, cd=cd_drill, h=H), font=dict(size=14)),
     )
     st.plotly_chart(figf, use_container_width=True)
-    st.caption(TXT["winner_caption"].format(modelo=row["modelo_ganador"], mase=row["mase"]))
+    if row.get("flag_serie_corta"):
+        # el MASE de una serie corta sale de un holdout de 1 punto: no es comparable con el de
+        # 3 ventanas/h=4 de las series largas. Decirlo, o parecen las mas precisas del tablero.
+        st.caption(TXT["short_series_caption"].format(n=row["n_periodos"]))
+    else:
+        st.caption(TXT["winner_caption"].format(modelo=row["modelo_ganador"], mase=row["mase"]))
 
 # ==================================================================== TAB 2: SKUs en riesgo
 with tab_risk:
