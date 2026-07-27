@@ -5,7 +5,6 @@ Consume resultados.parquet + historico.parquet (generados por pipeline.py)
 y los muestra en Streamlit. Correr con:  streamlit run app.py
 """
 
-import csv
 import datetime
 import io
 import json
@@ -101,6 +100,8 @@ STRINGS = {
         "app_caption": "Demo — clasificación SBC + statsforecast (Nixtla)",
         "lang_label": "Idioma",
         "upload_title": "📤 Cargar tus datos",
+        "upload_open_button": "📤 Cargar y Configurar Datos",
+        "upload_preview_caption": "Vista previa (primeras 5 filas):",
         "upload_ventas_label": "Ventas históricas (CSV)",
         "upload_inventario_label": "Inventario (CSV)",
         "upload_help": "Cualquier CSV sirve: abajo se elige qué columna del archivo corresponde a cada campo.",
@@ -210,6 +211,8 @@ STRINGS = {
         "app_caption": "Demo — SBC classification + statsforecast (Nixtla)",
         "lang_label": "Language",
         "upload_title": "📤 Upload your data",
+        "upload_open_button": "📤 Upload and Configure Data",
+        "upload_preview_caption": "Preview (first 5 rows):",
         "upload_ventas_label": "Sales history (CSV)",
         "upload_inventario_label": "Inventory (CSV)",
         "upload_help": "Any CSV works: below you pick which column of your file maps to each field.",
@@ -422,6 +425,17 @@ def inject_css():
         div[data-testid="stFileUploader"] button * {{
             color: {BG_DARK} !important;
         }}
+        /* Botones genericos (sidebar, modal de carga, "Procesar", "Correr igual"): al hacer
+        click, Streamlit/BaseWeb aplica un fondo blanco de foco que queda ilegible sobre el
+        tema oscuro. Forzar un gris celeste palido con texto oscuro en :active/:focus. */
+        .stApp button:active, .stApp button:focus, .stApp button:focus:not(:active) {{
+            background-color: #B0C4DE !important;
+            color: #1A2733 !important;
+            border-color: #B0C4DE !important;
+        }}
+        .stApp button:active *, .stApp button:focus *, .stApp button:focus:not(:active) * {{
+            color: #1A2733 !important;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -538,70 +552,86 @@ def boton_descarga(container, df_kpi: pl.DataFrame, ids: list[str], file_name: s
     )
 
 
-# ------------------------------------------------------------------ Sidebar
-st.sidebar.title(TXT["app_title"])
-st.sidebar.caption(TXT["app_caption"])
+def _preview_df(file, n=5):
+    """Lee solo las primeras n filas (headers + preview) sin materializar el CSV completo:
+    en un archivo de 1.5M filas, un read_csv sin limite duplicaria todo en RAM."""
+    if file is None:
+        return None
+    file.seek(0)
+    df = pl.read_csv(file, n_rows=n, infer_schema_length=n)
+    file.seek(0)
+    return df
 
-with st.sidebar.expander(TXT["upload_title"]):
-    ventas_file = st.file_uploader(TXT["upload_ventas_label"], type="csv", key="upload_ventas")
-    inventario_file = st.file_uploader(TXT["upload_inventario_label"], type="csv", key="upload_inventario")
+
+def _mapeo(clave, headers, campos, opcional=False):
+    """Un selectbox por campo, siempre visible, preseleccionado al header homonimo.
+    -> {destino: origen}; los campos sin asignar quedan afuera. `clave` incluye el lado
+    (ventas/inventario) ademas de la identidad del archivo, para que campos con el mismo
+    nombre (ej. "sku") en ambos lados nunca compartan `key` de widget."""
+    vacio = TXT["map_no_disponible"] if opcional else TXT["map_placeholder"]
+    mapa = {}
+    for c in campos:
+        opciones = [vacio] + headers
+        sel = st.selectbox(c, opciones, key=f"map_{clave}_{c}",
+                           index=opciones.index(c) if c in headers else 0)
+        if sel != vacio:
+            mapa[c] = sel
+    return mapa
+
+
+@st.dialog(TXT["upload_title"], width="large")
+def modal_carga_datos():
+    """Vista unica y larga (sin tabs): ventas arriba, inventario abajo, todo con scroll."""
     st.caption(TXT["upload_help"])
 
-    def _headers(file):
-        """Solo la primera linea: el file_uploader ya tiene el archivo entero en RAM y cada
-        widget de mapeo dispara un rerun — un read_csv por rerun seria una copia completa."""
-        if file is None:
-            return []
-        file.seek(0)
-        linea = file.readline().decode("utf-8-sig", errors="replace")
-        return next(csv.reader([linea.rstrip("\r\n")]), [])
-
-    def _mapeo(clave, headers, campos, opcional=False):
-        """Un selectbox por campo, siempre visible, preseleccionado al header homonimo.
-        -> {destino: origen}; los campos sin asignar quedan afuera."""
-        vacio = TXT["map_no_disponible"] if opcional else TXT["map_placeholder"]
-        mapa = {}
-        for c in campos:
-            opciones = [vacio] + headers
-            sel = st.selectbox(c, opciones, key=f"map_{clave}_{c}",
-                               index=opciones.index(c) if c in headers else 0)
-            if sel != vacio:
-                mapa[c] = sel
-        return mapa
-
-    head_v, head_i = _headers(ventas_file), _headers(inventario_file)
+    st.markdown(TXT["map_ventas_title"])
+    ventas_file = st.file_uploader(TXT["upload_ventas_label"], type="csv", key="modal_upload_ventas")
     # key por identidad de archivo: evita StreamlitAPIException al cambiar de archivo
-    # (selección previa contra opciones nuevas) — arranca de cero por archivo.
+    # (seleccion previa contra opciones nuevas) — arranca de cero por archivo.
     id_v = f"{ventas_file.name}_{ventas_file.size}" if ventas_file else "v"
-    id_i = f"{inventario_file.name}_{inventario_file.size}" if inventario_file else "i"
+    prev_v = _preview_df(ventas_file)
 
-    mapa_v, mapa_i, fmt_sel, defaults = {}, {}, "auto", {}
-    if head_v:
-        st.markdown(TXT["map_ventas_title"])
+    head_v, mapa_v, dims_v_sel, fmt_sel = [], {}, [], "auto"
+    if prev_v is not None:
+        st.caption(TXT["upload_preview_caption"])
+        st.dataframe(prev_v.head(5), use_container_width=True)
+        head_v = prev_v.columns
         st.caption(TXT["map_help"])
-        mapa_v = _mapeo(id_v, head_v, VENTAS_REQUIRED_COLS)
+        mapa_v = _mapeo(f"ventas_{id_v}", head_v, VENTAS_REQUIRED_COLS)
         fmt_sel = FORMATOS_FECHA[st.selectbox(TXT["map_fecha_formato"], list(FORMATOS_FECHA),
-                                              key=f"fmt_{id_v}")]
-    if head_i:
-        st.markdown(TXT["map_inventario_title"])
-        mapa_i = _mapeo(id_i, head_i, INVENTARIO_REQUIRED_COLS)
+                                              key=f"modal_fmt_{id_v}")]
+        cand_v = [c for c in head_v if c not in RESERVED_DIM_COLS and c not in mapa_v.values()]
+        dims_v_sel = st.multiselect(TXT["dims_ventas_label"], cand_v, default=cand_v,
+                                    key=f"modal_dims_ventas_{id_v}") if cand_v else []
+
+    st.divider()
+
+    st.markdown(TXT["map_inventario_title"])
+    inventario_file = st.file_uploader(TXT["upload_inventario_label"], type="csv", key="modal_upload_inventario")
+    id_i = f"{inventario_file.name}_{inventario_file.size}" if inventario_file else "i"
+    prev_i = _preview_df(inventario_file)
+
+    head_i, mapa_i, dims_i_sel, defaults = [], {}, [], {}
+    if prev_i is not None:
+        st.caption(TXT["upload_preview_caption"])
+        st.dataframe(prev_i.head(5), use_container_width=True)
+        head_i = prev_i.columns
+        mapa_i = _mapeo(f"inv_{id_i}", head_i, INVENTARIO_REQUIRED_COLS)
         st.markdown(TXT["map_inventario_opc"])
         st.caption(TXT["inv_opcional_help"])
-        mapa_i |= _mapeo(id_i, head_i, list(INVENTARIO_OPCIONALES), opcional=True)
+        mapa_i |= _mapeo(f"inv_{id_i}", head_i, list(INVENTARIO_OPCIONALES), opcional=True)
         defaults = {
             "pack": st.number_input(TXT["pack_default_label"], min_value=1,
-                                    value=INVENTARIO_OPCIONALES["pack"], key=f"packdef_{id_i}"),
+                                    value=INVENTARIO_OPCIONALES["pack"], key=f"modal_packdef_{id_i}"),
             "lead_time_dias": st.number_input(TXT["lead_time_default_label"], min_value=1,
                                               value=INVENTARIO_OPCIONALES["lead_time_dias"],
-                                              key=f"ltdef_{id_i}"),
+                                              key=f"modal_ltdef_{id_i}"),
         }
+        cand_i = [c for c in head_i if c not in RESERVED_DIM_COLS and c not in mapa_i.values()]
+        dims_i_sel = st.multiselect(TXT["dims_inventario_label"], cand_i, default=cand_i,
+                                    key=f"modal_dims_inventario_{id_i}") if cand_i else []
 
-    cand_v = [c for c in head_v if c not in RESERVED_DIM_COLS and c not in mapa_v.values()]
-    cand_i = [c for c in head_i if c not in RESERVED_DIM_COLS and c not in mapa_i.values()]
-    dims_v_sel = st.multiselect(TXT["dims_ventas_label"], cand_v, default=cand_v,
-                                key=f"dims_ventas_{id_v}") if cand_v else []
-    dims_i_sel = st.multiselect(TXT["dims_inventario_label"], cand_i, default=cand_i,
-                                key=f"dims_inventario_{id_i}") if cand_i else []
+    st.divider()
 
     incompleto = ([f"ventas.{c}" for c in VENTAS_REQUIRED_COLS if c not in mapa_v]
                   + [f"inventario.{c}" for c in INVENTARIO_REQUIRED_COLS if c not in mapa_i])
@@ -610,7 +640,7 @@ with st.sidebar.expander(TXT["upload_title"]):
         st.warning(TXT["map_dup_error"] if duplicado else f"{TXT['map_incompleto']} {', '.join(incompleto)}")
 
     listo = bool(ventas_file and inventario_file and not incompleto and not duplicado)
-    if st.button(TXT["upload_button"], disabled=not listo):
+    if st.button(TXT["upload_button"], disabled=not listo, key="modal_procesar"):
         # validado contra el estado de la UI: no se leyo ni una fila de datos todavia.
         ruta = escribir_carga(ventas_file, inventario_file, mapa_v, mapa_i,
                               dims_v_sel, dims_i_sel, fmt_sel, defaults)
@@ -624,7 +654,7 @@ with st.sidebar.expander(TXT["upload_title"]):
                 n=n_series, min=n_series * SEGUNDOS_POR_SERIE / 60))
             st.caption(TXT["preflight_cli"])
             st.code("python pipeline.py")
-            arrancar = st.button(TXT["preflight_run_anyway"])
+            arrancar = st.button(TXT["preflight_run_anyway"], key="modal_run_anyway")
         if arrancar:
             del st.session_state["n_series"]
             codigo, log = correr_pipeline()
@@ -633,6 +663,14 @@ with st.sidebar.expander(TXT["upload_title"]):
                 st.rerun()
             else:
                 st.code(log)
+
+
+# ------------------------------------------------------------------ Sidebar
+st.sidebar.title(TXT["app_title"])
+st.sidebar.caption(TXT["app_caption"])
+
+if st.sidebar.button(TXT["upload_open_button"]):
+    modal_carga_datos()
 
 res, hist = load()
 if res is None:
