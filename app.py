@@ -8,6 +8,7 @@ y los muestra en Streamlit. Correr con:  streamlit run app.py
 import datetime
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -115,6 +116,8 @@ STRINGS = {
         "upload_processing": "Procesando datos y recalculando forecast…",
         "upload_success": "Datos actualizados.",
         "upload_error": "Error al procesar los archivos:",
+        "log_completo": "Ver log completo",
+        "avisos_title": "⚠️ {n} aviso(s) de la última carga",
         "map_help": "Elegí de qué columna de tu CSV sale cada campo:",
         "upload_missing": "Faltan columnas requeridas:",
         "map_placeholder": "— elegir —",
@@ -230,6 +233,8 @@ STRINGS = {
         "upload_processing": "Processing data and recalculating forecast…",
         "upload_success": "Data updated.",
         "upload_error": "Error processing files:",
+        "log_completo": "View full log",
+        "avisos_title": "⚠️ {n} warning(s) from the last upload",
         "map_help": "Pick which column of your CSV maps to each field:",
         "upload_missing": "Missing required columns:",
         "map_placeholder": "— pick one —",
@@ -519,26 +524,49 @@ def contar_series(ruta_ventas, mapa_v):
             .collect().item())
 
 
+_ETAPA = re.compile(r"^\[(\d+)/(\d+)\]\s*(.*)")
+# ruido de statsmodels/numpy (llega por stderr, ver abajo): se oculta del panel, nunca del log.
+_RUIDO = re.compile(r"warn|deprecat|convergen|^\s*$", re.I)
+
+
 def correr_pipeline():
-    """Lanza pipeline.py y transmite su salida en vivo. -> (returncode, cola del log).
+    """Lanza pipeline.py y muestra su avance en un panel de altura fija.
+    -> (returncode, log completo, avisos).
+
     stderr fusionado en stdout para que un traceback aparezca en orden con las etapas;
-    -u porque el hijo bufferia por bloques cuando escribe a un pipe."""
+    -u porque el hijo bufferia por bloques cuando escribe a un pipe. Esa fusion es tambien
+    la que trae los warnings de statsmodels, de ahi el filtro de _RUIDO.
+
+    El panel NO usa status.write(): ese metodo acumula un elemento por linea y hacia crecer
+    el modal sin techo. Con st.empty() se reemplaza siempre la misma linea."""
     base = Path(__file__).parent
     proc = subprocess.Popen(
         [sys.executable, "-u", str(base / "pipeline.py")], cwd=base,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
-    lineas = []
+    lineas, avisos = [], []
     with st.status(TXT["upload_processing"], expanded=True) as status:
+        barra = st.progress(0.0)
+        detalle = st.empty()
         for linea in proc.stdout:
-            lineas.append(linea)
-            status.write(linea.rstrip())
+            linea = linea.rstrip()
+            lineas.append(linea)                    # log completo, sin filtrar
+            if m := _ETAPA.match(linea):
+                n, total, texto = int(m[1]), int(m[2]), m[3]
+                barra.progress(n / total, text=texto)
+                status.update(label=texto)
+            elif linea.startswith("AVISO:"):
+                avisos.append(linea)
+            if not _RUIDO.search(linea):
+                detalle.caption(linea)
         proc.wait()
         ok = proc.returncode == 0
+        barra.empty()
+        detalle.empty()
         status.update(state="complete" if ok else "error",
                       label=TXT["upload_success"] if ok else TXT["upload_error"])
-    return proc.returncode, "".join(lineas[-60:])
+    return proc.returncode, "\n".join(lineas), avisos
 
 
 def exportar_excel(df_kpi: pl.DataFrame, ids: list[str]) -> bytes:
@@ -679,12 +707,16 @@ def modal_carga_datos():
             arrancar = st.button(TXT["preflight_run_anyway"], key="modal_run_anyway")
         if arrancar:
             del st.session_state["n_series"]
-            codigo, log = correr_pipeline()
+            codigo, log, avisos = correr_pipeline()
             if codigo == 0:
+                # el rerun cierra el modal y se lleva el panel: los avisos (overlap 0, valores
+                # no numericos, filas duplicadas) son justo lo accionable, asi que sobreviven aca.
+                st.session_state["avisos_carga"] = avisos
                 st.cache_data.clear()
                 st.rerun()
             else:
-                st.code(log)
+                with st.expander(TXT["log_completo"], expanded=True):
+                    st.code(log)
 
 
 # ------------------------------------------------------------------ Sidebar
@@ -698,6 +730,12 @@ res, hist = load()
 if res is None:
     st.error("No se encontró resultados.parquet. Corre primero:  python pipeline.py")
     st.stop()
+
+# pop y no get: se muestran una vez despues de la carga, no en cada interaccion posterior.
+if avisos_carga := st.session_state.pop("avisos_carga", None):
+    with st.expander(TXT["avisos_title"].format(n=len(avisos_carga))):
+        for aviso in avisos_carga:
+            st.write(aviso)
 
 res = res.with_columns(
     pl.col("estado_inventario").replace(ESTADO_MAP).alias("estado_inventario"),

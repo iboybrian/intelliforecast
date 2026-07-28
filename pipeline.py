@@ -43,6 +43,8 @@ MIN_TRAIN = 4             # piso de puntos de entrenamiento en la ventana mas te
 # series con menos de esto no alcanzan para el rolling origin -> forecast_corto()
 MIN_PERIODOS = H + STEP_SIZE * (N_WINDOWS - 1) + MIN_TRAIN
 
+ETAPAS = 5                # etapas del pipeline; app.py parsea "[n/ETAPAS]" para la barra
+
 # columnas requeridas por lado; el resto del CSV puede venir como dimension extra.
 REQ = {
     "ventas": ["sku", "centro_distribucion", "fecha", "cantidad"],
@@ -65,6 +67,20 @@ FAMILIES = {
         "models": [CrostonClassic(), TSB(alpha_d=0.2, alpha_p=0.2), ADIDA()],
     },
 }
+
+
+def etapa(n, texto):
+    """Marcador de progreso. app.py lo parsea para mover la barra del panel de carga, y en
+    terminal se lee igual que antes. flush: el hijo escribe a un pipe y bufferia por bloques,
+    asi que sin esto las etapas llegan de golpe al final."""
+    print(f"[{n}/{ETAPAS}] {texto}", flush=True)
+
+
+def resumen_conteo(df, col):
+    """Conteo por categoria en una linea. Un print(df) de polars son ~10 lineas de marco que
+    en el panel de la UI tapan todo lo demas."""
+    conteo = df.group_by(col).len().sort(col)
+    return "  " + " · ".join(f"{c}: {n:,}" for c, n in conteo.iter_rows())
 
 
 def load_config(path="carga.json"):
@@ -277,14 +293,14 @@ def build_forecast_table(ventas: pl.DataFrame, clasif: pl.DataFrame) -> pl.DataF
     resultados = []
     cortas = clasif.filter(pl.col("flag_serie_corta"))["unique_id"]
     if cortas.len():
-        print(f"[3/5] {cortas.len():,} series cortas (<{MIN_PERIODOS} meses) -> SeasonalNaive")
+        etapa(3, f"{cortas.len():,} series cortas (<{MIN_PERIODOS} meses) -> SeasonalNaive")
         resultados.append(forecast_corto(ventas.filter(pl.col("unique_id").is_in(cortas.implode()))))
 
     for fam, fam_cfg in FAMILIES.items():
         ids = clasif.filter(pl.col("clasificacion").is_in(fam_cfg["clases"])
                             & ~pl.col("flag_serie_corta"))["unique_id"]
         if ids.len():
-            print(f"[3/5] Backtesting {ids.len():,} series de familia {fam}...")
+            etapa(3, f"Backtesting {ids.len():,} series de familia {fam}...")
             sub = ventas.filter(pl.col("unique_id").is_in(ids.implode()))
             names = [str(m) for m in fam_cfg["models"]]
             resultados.append(backtest_and_forecast(sub, fam_cfg["models"], names))
@@ -467,23 +483,24 @@ def main():
     cfg = load_config()
     defaults = {**INV_DEFAULTS, **{k: float(v) for k, v in cfg.get("defaults", {}).items()}}
 
-    print("[1/5] Leyendo CSV y agregando a mensual...")
+    etapa(1, "Leyendo CSV y agregando a mensual...")
     lf_ventas, dims_v, inventario, dims_i = load_data(cfg)
     ventas = aggregate_monthly(lf_ventas, dims_v)
-    print(f"Ventas (mensual): {ventas.shape}, Inventario: {inventario.shape}")
+    print(f"  {ventas['unique_id'].n_unique():,} series · {ventas.height:,} filas mensuales · "
+          f"{inventario.height:,} filas de inventario")
 
-    print("[2/5] Clasificando demanda...")
+    etapa(2, "Clasificando demanda...")
     clasif = classify_demand(ventas)
-    print(clasif.group_by("clasificacion").len().sort("clasificacion"))
+    print(resumen_conteo(clasif, "clasificacion"))
 
     tabla = build_forecast_table(ventas, clasif)
-    print(f"[4/5] Tabla de forecast: {tabla.shape}")
+    etapa(4, f"Calculando KPIs de {tabla.height:,} series...")
 
     resultados = calcular_kpis(tabla, ventas, inventario, defaults)
     resultados = unir_dimensiones(resultados, ventas, inventario, dims_v, dims_i)
 
-    print(f"[5/5] Resultados finales: {resultados.shape}")
-    print(resultados.group_by("estado_inventario").len())
+    etapa(5, f"Resultados: {resultados.height:,} combinaciones SKU-centro")
+    print(resumen_conteo(resultados, "estado_inventario"))
 
     resultados.write_parquet("resultados.parquet")
     ventas.write_parquet("historico.parquet")
