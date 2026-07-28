@@ -106,7 +106,7 @@ def scan_lado(path, cfg, requeridas, opcionales=()):
     mixtas (100 filas con "1" y despues un "1 MUEBLES") y la inferencia de polars aborta la
     corrida entera por una columna que quiza solo viaja como dimension. Los pocos campos
     numericos se castean explicito y no-estricto donde se usan: 'cantidad' en
-    aggregate_monthly, existencia/pack/lead_time_dias en prorratear_existencia."""
+    aggregate_monthly, existencia/pack/lead_time_dias en _numericos_con_default."""
     fmt = cfg.get("formato_fecha") or "auto"
     lf = pl.scan_csv(path, infer_schema_length=0)
     disponibles = lf.collect_schema().names()          # lee solo el header
@@ -130,8 +130,13 @@ def load_data(cfg=None):
     cfg = cfg or {}
     lf_ventas, dims_v = scan_lado("ventas_historicas.csv", cfg.get("ventas", {}), REQ["ventas"])
     lf_inv, dims_i = scan_lado("inventario.csv", cfg.get("inventario", {}), REQ["inventario"],
-                               opcionales=("pack", "lead_time_dias"))
-    inventario = lf_inv.with_columns(pl.col("sku").cast(pl.String)).collect()
+                               opcionales=("centro_distribucion", "pack", "lead_time_dias"))
+    inventario = lf_inv.collect()
+    # mismas llaves como String que del lado ventas (ver aggregate_monthly): un tienda_id
+    # numerico no cruzaria contra el centro_distribucion string de las series.
+    inventario = inventario.with_columns(
+        pl.col(c).cast(pl.String) for c in ("sku", "centro_distribucion") if c in inventario.columns
+    )
     return lf_ventas, dims_v, inventario, dims_i
 
 
@@ -288,15 +293,67 @@ def build_forecast_table(ventas: pl.DataFrame, clasif: pl.DataFrame) -> pl.DataF
     return clasif.join(forecast_tabla, on="unique_id")
 
 
-def prorratear_existencia(ventas: pl.DataFrame, inventario: pl.DataFrame, defaults) -> pl.DataFrame:
-    """Reparte la existencia a nivel SKU entre sus CDs, proporcional al historico de ventas.
+SALIDA_EXISTENCIA = ["sku", "centro_distribucion", "existencia_cd", "pack", "lead_time_dias"]
 
-    Join LEFT: un SKU con ventas y sin fila en inventario conserva su forecast y entra con
-    existencia 0 (-> Riesgo de quiebre). Dejarlo null lo etiquetaria "Normal" en silencio,
-    porque un when() con condicion nula cae en el otherwise."""
-    ventas_por_cd = ventas.group_by(["sku", "centro_distribucion"]).agg(
-        pl.col("cantidad").sum().alias("ventas_totales_cd")
+
+def _numericos_con_default(df: pl.DataFrame, defaults) -> pl.DataFrame:
+    """Castea existencia/pack/lead_time_dias a Float64 y rellena los huecos con su default.
+
+    El CSV entra todo como String (ver scan_lado): el cast es no-estricto para que un "N/A"
+    o un "1,234" caiga en el default en vez de tumbar la corrida. Se cuenta cuantos se
+    perdieron: una columna entera ilegible da existencia 0 -> todo en "Riesgo de quiebre",
+    que sin este aviso parece un problema del modelo y no del archivo."""
+    presentes = {k: df[k].is_not_null().sum() for k in defaults if k in df.columns}
+    # una sola expresion cubre los dos huecos: columna nunca mapeada (pl.lit) y fila ausente
+    # del inventario (el null que deja el left join).
+    df = df.with_columns([
+        (pl.col(k) if k in df.columns else pl.lit(v)).cast(pl.Float64, strict=False).alias(k)
+        for k, v in defaults.items()
+    ])
+    for k, n in presentes.items():
+        ilegibles = n - df[k].is_not_null().sum()
+        if ilegibles:
+            print(f"AVISO: {ilegibles:,} valores de '{k}' no son numericos -> default {defaults[k]}")
+    return df.with_columns([pl.col(k).fill_null(v) for k, v in defaults.items()])
+
+
+def _existencia_por_cd_directa(ventas_por_cd: pl.DataFrame, inventario: pl.DataFrame,
+                               defaults) -> pl.DataFrame:
+    """Inventario que ya viene por sku+CD: se matchea directo, sin repartir nada."""
+    llaves = ["sku", "centro_distribucion"]
+    # castear ANTES de agrupar: asi el aviso de valores ilegibles cuenta filas del archivo y no
+    # grupos ya colapsados. Ademas garantiza que pack/lead_time_dias existan para el agg.
+    filas = _numericos_con_default(inventario, defaults)
+    # varias filas por sku-CD (bines/ubicaciones dentro de la tienda) se suman; sin esto el
+    # join haria fan-out y duplicaria la combinacion en el parquet de resultados.
+    inv = filas.group_by(llaves).agg(
+        pl.col("existencia").sum(), pl.col("pack").first(), pl.col("lead_time_dias").first()
     )
+    if inv.height < filas.height:
+        print(f"AVISO: {filas.height - inv.height:,} filas de inventario duplicadas por "
+              f"SKU-CD; se suma la existencia")
+
+    cruzan = ventas_por_cd.join(inv, on=llaves, how="semi").height
+    if cruzan < ventas_por_cd.height:
+        print(f"AVISO: {ventas_por_cd.height - cruzan:,} de {ventas_por_cd.height:,} "
+              f"combinaciones SKU-CD con ventas no estan en inventario -> existencia 0")
+    if cruzan == 0:
+        # tipico desajuste de formato de llave (id vs nombre de tienda, ceros a la izquierda):
+        # sin este aviso el dashboard sale entero en "Riesgo de quiebre" sin un solo error.
+        print(f"AVISO: NINGUNA combinacion SKU-CD cruzo contra el inventario. "
+              f"Centros en ventas: {ventas_por_cd['centro_distribucion'].unique().head(5).to_list()} · "
+              f"en inventario: {inv['centro_distribucion'].unique().head(5).to_list()}")
+
+    # las combinaciones con ventas y sin fila de inventario quedan null -> default (existencia 0)
+    directo = ventas_por_cd.join(inv, on=llaves, how="left").with_columns(
+        [pl.col(k).fill_null(v) for k, v in defaults.items()]
+    )
+    return directo.with_columns(pl.col("existencia").alias("existencia_cd")).select(SALIDA_EXISTENCIA)
+
+
+def _existencia_por_cd_prorrateada(ventas_por_cd: pl.DataFrame, inventario: pl.DataFrame,
+                                   defaults) -> pl.DataFrame:
+    """Inventario a nivel SKU: se reparte entre los CDs proporcional al historico de ventas."""
     ventas_por_sku = ventas_por_cd.group_by("sku").agg(
         pl.col("ventas_totales_cd").sum().alias("ventas_totales_sku")
     )
@@ -305,34 +362,37 @@ def prorratear_existencia(ventas: pl.DataFrame, inventario: pl.DataFrame, defaul
         print(f"AVISO: {sin_inv:,} SKU con ventas y sin registro en inventario -> existencia 0")
 
     prorrateo = ventas_por_cd.join(ventas_por_sku, on="sku").join(inventario, on="sku", how="left")
-    # el CSV entra todo como String (ver scan_lado): el cast es no-estricto para que un "N/A"
-    # o un "1,234" caiga en el default en vez de tumbar la corrida. Se cuenta cuantos se
-    # perdieron: una columna entera ilegible da existencia 0 -> todo en "Riesgo de quiebre",
-    # que sin este aviso parece un problema del modelo y no del archivo.
-    presentes = {k: prorrateo[k].is_not_null().sum() for k in defaults if k in prorrateo.columns}
-    # una sola expresion cubre los dos huecos: columna nunca mapeada (pl.lit) y SKU ausente
-    # del inventario (el null que deja el left join).
-    prorrateo = prorrateo.with_columns([
-        (pl.col(k) if k in prorrateo.columns else pl.lit(v)).cast(pl.Float64, strict=False).alias(k)
-        for k, v in defaults.items()
-    ])
-    for k, n in presentes.items():
-        ilegibles = n - prorrateo[k].is_not_null().sum()
-        if ilegibles:
-            print(f"AVISO: {ilegibles:,} valores de '{k}' no son numericos -> default {defaults[k]}")
-    prorrateo = prorrateo.with_columns([pl.col(k).fill_null(v) for k, v in defaults.items()])
-    prorrateo = prorrateo.with_columns(
+    prorrateo = _numericos_con_default(prorrateo, defaults)
+    return prorrateo.with_columns(
         pl.when(pl.col("ventas_totales_sku") > 0)
           .then(pl.col("existencia") * pl.col("ventas_totales_cd") / pl.col("ventas_totales_sku"))
           .otherwise(pl.col("existencia") / pl.col("centro_distribucion").count().over("sku"))
-          .alias("existencia_prorrateada")
+          .alias("existencia_cd")
+    ).select(SALIDA_EXISTENCIA)
+
+
+def resolver_existencia_por_cd(ventas: pl.DataFrame, inventario: pl.DataFrame,
+                               defaults) -> pl.DataFrame:
+    """Existencia a nivel SKU-CD, que es el grano de resultados.parquet.
+
+    Dos caminos segun lo que traiga el archivo de inventario:
+      - con centro_distribucion -> join directo sku+CD, la existencia de cada tienda es la suya.
+      - sin centro_distribucion -> se prorratea la existencia del SKU entre sus CDs.
+
+    En los dos, join LEFT contra las ventas: una combinacion con ventas y sin fila de inventario
+    conserva su forecast y entra con existencia 0 (-> Riesgo de quiebre). Dejarla null la
+    etiquetaria "Normal" en silencio, porque un when() con condicion nula cae en el otherwise."""
+    ventas_por_cd = ventas.group_by(["sku", "centro_distribucion"]).agg(
+        pl.col("cantidad").sum().alias("ventas_totales_cd")
     )
-    return prorrateo.select(["sku", "centro_distribucion", "existencia_prorrateada", "pack", "lead_time_dias"])
+    if "centro_distribucion" in inventario.columns:
+        return _existencia_por_cd_directa(ventas_por_cd, inventario, defaults)
+    return _existencia_por_cd_prorrateada(ventas_por_cd, inventario, defaults)
 
 
 def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.DataFrame, defaults) -> pl.DataFrame:
-    prorrateo = prorratear_existencia(ventas, inventario, defaults)
-    tabla = tabla.join(prorrateo, on=["sku", "centro_distribucion"])
+    existencias = resolver_existencia_por_cd(ventas, inventario, defaults)
+    tabla = tabla.join(existencias, on=["sku", "centro_distribucion"])
 
     forecast_cols = [f"forecast_w{i}" for i in range(1, H + 1)]
     tabla = tabla.with_columns(
@@ -343,7 +403,7 @@ def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.Data
         (pl.col("forecast_mensual_promedio") / 30.44).alias("demanda_diaria_promedio")
     ).with_columns(
         pl.when(pl.col("demanda_diaria_promedio") > 1e-6)
-          .then(pl.col("existencia_prorrateada") / pl.col("demanda_diaria_promedio"))
+          .then(pl.col("existencia_cd") / pl.col("demanda_diaria_promedio"))
           .otherwise(None)
           .alias("doh")
     ).with_columns([
@@ -353,7 +413,7 @@ def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.Data
 
     tabla = tabla.with_columns(
         pl.when(pl.col("doh").is_null())
-          .then(pl.when(pl.col("existencia_prorrateada") > 0).then(pl.lit("Sobre-stock")).otherwise(pl.lit("Normal")))
+          .then(pl.when(pl.col("existencia_cd") > 0).then(pl.lit("Sobre-stock")).otherwise(pl.lit("Normal")))
           .when(pl.col("doh") < pl.col("lead_time_dias")).then(pl.lit("Riesgo de quiebre"))
           .when(pl.col("doh") > 120).then(pl.lit("Sobre-stock"))
           .otherwise(pl.lit("Normal"))
@@ -391,8 +451,11 @@ def unir_dimensiones(resultados, mensual, inventario, dims_v, dims_i):
 
     nuevas_i = [d for d in dims_i if d not in resultados.columns]
     if nuevas_i:
-        resultados = resultados.join(inventario.select(["sku", *nuevas_i]).unique("sku"),
-                                     on="sku", how="left")
+        # con inventario por tienda hay que llavear por ambas: a nivel sku se tomaria el valor
+        # de un CD arbitrario, igual que con las dimensiones de ventas de arriba.
+        llaves_i = ["sku", "centro_distribucion"] if "centro_distribucion" in inventario.columns else ["sku"]
+        resultados = resultados.join(inventario.select([*llaves_i, *nuevas_i]).unique(llaves_i),
+                                     on=llaves_i, how="left")
     return resultados
 
 
@@ -462,7 +525,43 @@ def _check():
 
     d = pl.DataFrame({"modelo": ["X", "Y"], "mase": [None, 2.0]})
     assert d.with_columns(_mase_valido()).sort("mase")["modelo"][0] == "Y", "el MASE null gano"
+
+    _check_existencia()
     print("check OK")
+
+
+def _check_existencia():
+    """Los dos caminos de resolver_existencia_por_cd: join directo por CD vs prorrateo."""
+    # un SKU vendido en 2 tiendas, con 3/4 de la venta en N.
+    ventas = pl.DataFrame({
+        "sku": ["A"] * 4, "centro_distribucion": ["N", "N", "S", "S"],
+        "cantidad": [30.0, 30, 10, 10],
+    })
+
+    # --- camino directo: cada tienda se queda con SU existencia, no con una fraccion ---
+    inv_cd = pl.DataFrame({"sku": ["A", "A"], "centro_distribucion": ["N", "S"],
+                           "existencia": ["100", "7"]})
+    r = resolver_existencia_por_cd(ventas, inv_cd, INV_DEFAULTS).sort("centro_distribucion")
+    assert r.height == 2, f"fan-out del join: {r.height} filas"
+    assert r["existencia_cd"].to_list() == [100.0, 7.0], r["existencia_cd"].to_list()
+
+    # filas duplicadas por sku-CD se suman (varios bines dentro de la misma tienda)
+    inv_dup = pl.DataFrame({"sku": ["A"] * 3, "centro_distribucion": ["N", "N", "S"],
+                            "existencia": ["60", "40", "7"]})
+    r = resolver_existencia_por_cd(ventas, inv_dup, INV_DEFAULTS).sort("centro_distribucion")
+    assert r.height == 2 and r["existencia_cd"].to_list() == [100.0, 7.0], r.to_dicts()
+
+    # combinacion con ventas y sin fila de inventario -> existencia 0, no null (seria "Normal")
+    inv_falta = pl.DataFrame({"sku": ["A"], "centro_distribucion": ["N"], "existencia": ["100"]})
+    r = resolver_existencia_por_cd(ventas, inv_falta, INV_DEFAULTS).sort("centro_distribucion")
+    assert r["existencia_cd"].to_list() == [100.0, 0.0], r["existencia_cd"].to_list()
+
+    # --- camino prorrateo: sin columna de CD, se reparte 120 segun la venta (75%/25%) ---
+    inv_sku = pl.DataFrame({"sku": ["A"], "existencia": ["120"]})
+    r = resolver_existencia_por_cd(ventas, inv_sku, INV_DEFAULTS).sort("centro_distribucion")
+    assert r["existencia_cd"].to_list() == [90.0, 30.0], r["existencia_cd"].to_list()
+    # y los defaults siguen entrando donde el archivo no trae la columna
+    assert r["pack"].to_list() == [1.0, 1.0] and r["lead_time_dias"].to_list() == [30.0, 30.0]
 
 
 if __name__ == "__main__":

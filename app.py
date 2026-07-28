@@ -42,7 +42,7 @@ H = 4
 # en la carga de CSVs (duplicado a propósito, mismo patrón que ADI/CV2_THRESHOLD arriba).
 RESERVED_DIM_COLS = {
     "unique_id", "adi", "cv2", "clasificacion", "modelo_ganador", "mase",
-    "existencia", "existencia_prorrateada", "pack", "lead_time_dias",
+    "existencia", "existencia_cd", "ventas_totales_cd", "pack", "lead_time_dias",
     "n_periodos", "flag_serie_corta",
     "forecast_mensual_promedio", "demanda_diaria_promedio", "doh", "wos", "moh",
     "estado_inventario", "demanda_lead_time", "cantidad_reorden",
@@ -122,6 +122,10 @@ STRINGS = {
         "map_ventas_title": "**Ventas — campos obligatorios**",
         "map_inventario_title": "**Inventario — campos obligatorios**",
         "map_inventario_opc": "**Inventario — opcionales**",
+        "inv_cd_help": "Si tu inventario indica en qué centro está cada existencia, asignalo acá: "
+                       "el stock se matchea directo contra las ventas de ese mismo centro. "
+                       "Si lo dejás sin asignar, la existencia del SKU se reparte entre sus "
+                       "centros proporcional al histórico de ventas.",
         "map_fecha_formato": "Formato de fecha",
         "map_dup_error": "Una misma columna está asignada a dos campos distintos.",
         "map_incompleto": "Faltan campos por asignar.",
@@ -233,6 +237,10 @@ STRINGS = {
         "map_ventas_title": "**Sales — required fields**",
         "map_inventario_title": "**Inventory — required fields**",
         "map_inventario_opc": "**Inventory — optional**",
+        "inv_cd_help": "If your inventory states which center holds each stock, map it here: "
+                       "stock is matched directly against sales from that same center. "
+                       "If you leave it unassigned, the SKU's stock is split across its "
+                       "centers proportionally to sales history.",
         "map_fecha_formato": "Date format",
         "map_dup_error": "The same column is assigned to two different fields.",
         "map_incompleto": "Some fields are still unassigned.",
@@ -628,6 +636,10 @@ def modal_carga_datos():
         head_i = prev_i.columns
         mapa_i = _mapeo(f"inv_{id_i}", head_i, INVENTARIO_REQUIRED_COLS)
         st.markdown(TXT["map_inventario_opc"])
+        # centro_distribucion decide el modo de calculo: asignado -> join directo sku+CD;
+        # sin asignar -> pipeline.py prorratea la existencia del SKU entre sus centros.
+        st.caption(TXT["inv_cd_help"])
+        mapa_i |= _mapeo(f"inv_{id_i}", head_i, ["centro_distribucion"], opcional=True)
         st.caption(TXT["inv_opcional_help"])
         mapa_i |= _mapeo(f"inv_{id_i}", head_i, list(INVENTARIO_OPCIONALES), opcional=True)
         defaults = {
@@ -861,7 +873,7 @@ with tab_overview:
     criticos = criticos_base.select([
         pl.col("sku").alias(TXT["col_sku"]), pl.col("centro_distribucion").alias(TXT["col_cd"]),
         pl.col("clasificacion").alias(TXT["col_clase"]), pl.col("estado_inventario").alias(TXT["col_estado"]),
-        pl.col("existencia_prorrateada").round(0).alias(TXT["col_existencia"]),
+        pl.col("existencia_cd").round(0).alias(TXT["col_existencia"]),
         pl.col("forecast_mensual_promedio").round(1).alias(TXT["col_fcst"]),
         pl.col("doh").round(1).alias(TXT["col_doh"]),
         pl.col("wos").round(1).alias(TXT["col_wos"]),
@@ -903,7 +915,7 @@ with tab_overview:
     st.markdown(
         f"<span style='background:{badge};color:{BG_DARK};padding:3px 10px;border-radius:12px;"
         f"font-size:0.85em;font-weight:600'>{row['estado_inventario']}</span> &nbsp; "
-        + TXT["badge_line"].format(exist=row["existencia_prorrateada"], pack=row["pack"], reorden=row["cantidad_reorden"]),
+        + TXT["badge_line"].format(exist=row["existencia_cd"], pack=row["pack"], reorden=row["cantidad_reorden"]),
         unsafe_allow_html=True,
     )
 
@@ -987,7 +999,7 @@ with tab_risk:
             pl.col("sku").alias(TXT["col_sku"]), pl.col("centro_distribucion").alias(TXT["col_cd"]),
             pl.col("clasificacion").alias(TXT["col_clase"]),
             pl.col("lead_time_dias").alias(TXT["col_lead"]),
-            pl.col("existencia_prorrateada").round(0).alias(TXT["risk_stock"]),
+            pl.col("existencia_cd").round(0).alias(TXT["risk_stock"]),
             pl.col("forecast_mensual_promedio").round(1).alias(TXT["col_fcst_prom"]),
             pl.col("moh").round(1).alias(TXT["col_moh"]),
             pl.col("demanda_lead_time").round(0).alias(TXT["col_fcst_compra"]),
@@ -1031,7 +1043,7 @@ with tab_overstock:
 
     # umbral de sobre-stock: 120 dias (ver estado_inventario en pipeline.py)
     exceso_expr = pl.max_horizontal(
-        pl.col("existencia_prorrateada") - pl.col("demanda_diaria_promedio") * 120, pl.lit(0.0)
+        pl.col("existencia_cd") - pl.col("demanda_diaria_promedio") * 120, pl.lit(0.0)
     )
     sobre = res_f.filter(pl.col("estado_inventario") == estado_sobre).sort("doh", descending=True)
     sobre = sobre.with_columns(exceso_expr.round(0).alias("exceso_unidades"))
@@ -1054,7 +1066,7 @@ with tab_overstock:
         tabla_sobre = sobre.select([
             pl.col("sku").alias(TXT["col_sku"]), pl.col("centro_distribucion").alias(TXT["col_cd"]),
             pl.col("clasificacion").alias(TXT["col_clase"]),
-            pl.col("existencia_prorrateada").round(0).alias(TXT["risk_stock"]),
+            pl.col("existencia_cd").round(0).alias(TXT["risk_stock"]),
             pl.col("doh").round(1).alias(TXT["col_doh"]),
             pl.col("moh").round(1).alias(TXT["col_moh"]),
             pl.col("forecast_mensual_promedio").round(1).alias(TXT["col_fcst"]),
