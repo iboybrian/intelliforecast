@@ -77,14 +77,38 @@ def load_config(path="carga.json"):
         return {}
 
 
+def _parse_fecha(lf, fmt, path):
+    """Columna 'fecha' String -> Date. strict=False manda las ilegibles a null; aggregate_monthly
+    las cuenta y avisa."""
+    if fmt != "auto":
+        return lf.with_columns(pl.col("fecha").str.to_date(fmt, strict=False))
+    # "auto" = inferencia de polars: reconoce los formatos comunes, pero si no reconoce
+    # NINGUNO levanta ComputeError en vez de dar null (ej. un periodo "2026-02"). Se prueba
+    # sobre una muestra para fallar aca, con un mensaje accionable, y no a media agregacion.
+    muestra = lf.select("fecha").head(200).collect()
+    try:
+        muestra.select(pl.col("fecha").str.to_date(strict=False))
+    except pl.exceptions.ComputeError:
+        ejemplos = muestra["fecha"].drop_nulls().head(3).to_list()
+        raise SystemExit(f"{path}: no se pudo inferir el formato de fecha (ejemplos: {ejemplos}). "
+                         f"Elegir el formato explicito al cargar los datos.")
+    return lf.with_columns(pl.col("fecha").str.to_date(strict=False))
+
+
 def scan_lado(path, cfg, requeridas, opcionales=()):
     """scan_csv + proyeccion segun el mapeo de la UI. -> (LazyFrame, dims).
 
     select(alias) en vez de rename: habilita projection pushdown (polars parsea solo las
     columnas mapeadas, no las 1.5M filas completas) y evita colisiones si el CSV ya trae
-    un header con el nombre destino."""
+    un header con el nombre destino.
+
+    infer_schema_length=0 -> todo entra como String. Los CSV del cliente traen columnas
+    mixtas (100 filas con "1" y despues un "1 MUEBLES") y la inferencia de polars aborta la
+    corrida entera por una columna que quiza solo viaja como dimension. Los pocos campos
+    numericos se castean explicito y no-estricto donde se usan: 'cantidad' en
+    aggregate_monthly, existencia/pack/lead_time_dias en prorratear_existencia."""
     fmt = cfg.get("formato_fecha") or "auto"
-    lf = pl.scan_csv(path, try_parse_dates=(fmt == "auto"))
+    lf = pl.scan_csv(path, infer_schema_length=0)
     disponibles = lf.collect_schema().names()          # lee solo el header
     mapa = {d: o for d, o in (cfg.get("columnas") or {}).items() if o in disponibles}
     for c in (*requeridas, *opcionales):               # nombre canonico en el CSV -> mapeo identidad
@@ -97,8 +121,8 @@ def scan_lado(path, cfg, requeridas, opcionales=()):
     candidatas = cfg.get("dimensiones") or [] if cfg.get("columnas") else disponibles
     dims = [d for d in candidatas if d in disponibles and d not in mapa.values()]
     lf = lf.select([pl.col(o).alias(d) for d, o in mapa.items()] + [pl.col(d) for d in dims])
-    if "fecha" in mapa and fmt != "auto":
-        lf = lf.with_columns(pl.col("fecha").str.to_date(fmt, strict=False))
+    if "fecha" in mapa:
+        lf = _parse_fecha(lf, fmt, path)
     return lf, dims
 
 
@@ -281,12 +305,22 @@ def prorratear_existencia(ventas: pl.DataFrame, inventario: pl.DataFrame, defaul
         print(f"AVISO: {sin_inv:,} SKU con ventas y sin registro en inventario -> existencia 0")
 
     prorrateo = ventas_por_cd.join(ventas_por_sku, on="sku").join(inventario, on="sku", how="left")
+    # el CSV entra todo como String (ver scan_lado): el cast es no-estricto para que un "N/A"
+    # o un "1,234" caiga en el default en vez de tumbar la corrida. Se cuenta cuantos se
+    # perdieron: una columna entera ilegible da existencia 0 -> todo en "Riesgo de quiebre",
+    # que sin este aviso parece un problema del modelo y no del archivo.
+    presentes = {k: prorrateo[k].is_not_null().sum() for k in defaults if k in prorrateo.columns}
     # una sola expresion cubre los dos huecos: columna nunca mapeada (pl.lit) y SKU ausente
-    # del inventario (fill_null despues del left join).
+    # del inventario (el null que deja el left join).
     prorrateo = prorrateo.with_columns([
-        (pl.col(k) if k in prorrateo.columns else pl.lit(v)).cast(pl.Float64).fill_null(v).alias(k)
+        (pl.col(k) if k in prorrateo.columns else pl.lit(v)).cast(pl.Float64, strict=False).alias(k)
         for k, v in defaults.items()
     ])
+    for k, n in presentes.items():
+        ilegibles = n - prorrateo[k].is_not_null().sum()
+        if ilegibles:
+            print(f"AVISO: {ilegibles:,} valores de '{k}' no son numericos -> default {defaults[k]}")
+    prorrateo = prorrateo.with_columns([pl.col(k).fill_null(v) for k, v in defaults.items()])
     prorrateo = prorrateo.with_columns(
         pl.when(pl.col("ventas_totales_sku") > 0)
           .then(pl.col("existencia") * pl.col("ventas_totales_cd") / pl.col("ventas_totales_sku"))

@@ -54,8 +54,11 @@ INVENTARIO_REQUIRED_COLS = ["sku", "existencia"]
 # opcionales: si el CSV no las trae, pipeline.py usa el default del number_input
 INVENTARIO_OPCIONALES = {"pack": 1, "lead_time_dias": 30}
 
+# "YYYY-MM" cubre los CSV con columna de periodo (2026-02): polars lo resuelve al dia 1,
+# que es justo el grano al que aggregate_monthly trunca despues.
 FORMATOS_FECHA = {"Auto": "auto", "YYYY-MM-DD": "%Y-%m-%d",
-                  "DD/MM/YYYY": "%d/%m/%Y", "MM/DD/YYYY": "%m/%d/%Y"}
+                  "DD/MM/YYYY": "%d/%m/%Y", "MM/DD/YYYY": "%m/%d/%Y",
+                  "YYYY-MM": "%Y-%m"}
 
 # arriba de este umbral de series se pide confirmacion antes de lanzar el pipeline:
 # con AutoARIMA exhaustivo la corrida puede durar horas y bloquea la app entera.
@@ -500,8 +503,10 @@ def escribir_carga(ventas_file, inventario_file, mapa_v, mapa_i, dims_v, dims_i,
 
 
 def contar_series(ruta_ventas, mapa_v):
-    """Series (sku x centro) del CSV ya escrito. Con pushdown polars lee solo esas 2 columnas."""
-    return (pl.scan_csv(ruta_ventas)
+    """Series (sku x centro) del CSV ya escrito. Con pushdown polars lee solo esas 2 columnas.
+    infer_schema_length=0 (todo String) por lo mismo que _preview_df: contar unicos no
+    necesita tipos, y una columna mixta no debe tumbar el preflight."""
+    return (pl.scan_csv(ruta_ventas, infer_schema_length=0)
             .select(pl.struct(mapa_v["sku"], mapa_v["centro_distribucion"]).n_unique())
             .collect().item())
 
@@ -554,11 +559,16 @@ def boton_descarga(container, df_kpi: pl.DataFrame, ids: list[str], file_name: s
 
 def _preview_df(file, n=5):
     """Lee solo las primeras n filas (headers + preview) sin materializar el CSV completo:
-    en un archivo de 1.5M filas, un read_csv sin limite duplicaria todo en RAM."""
+    en un archivo de 1.5M filas, un read_csv sin limite duplicaria todo en RAM.
+
+    infer_schema_length=0 -> todas las columnas como String. Sin eso polars infiere el tipo
+    de CADA columna y, como lee por bloques (mucho mas alla de n_rows), una columna mixta
+    —"1", "1", ..., "1 MUEBLES"— tumba el preview con ComputeError aunque esa columna ni
+    siquiera se vaya a mapear. El preview solo muestra texto: el tipo real no importa aca."""
     if file is None:
         return None
     file.seek(0)
-    df = pl.read_csv(file, n_rows=n, infer_schema_length=n)
+    df = pl.read_csv(file, n_rows=n, infer_schema_length=0)
     file.seek(0)
     return df
 
@@ -594,7 +604,7 @@ def modal_carga_datos():
     head_v, mapa_v, dims_v_sel, fmt_sel = [], {}, [], "auto"
     if prev_v is not None:
         st.caption(TXT["upload_preview_caption"])
-        st.dataframe(prev_v.head(5), use_container_width=True)
+        st.dataframe(prev_v.head(5))
         head_v = prev_v.columns
         st.caption(TXT["map_help"])
         mapa_v = _mapeo(f"ventas_{id_v}", head_v, VENTAS_REQUIRED_COLS)
@@ -614,7 +624,7 @@ def modal_carga_datos():
     head_i, mapa_i, dims_i_sel, defaults = [], {}, [], {}
     if prev_i is not None:
         st.caption(TXT["upload_preview_caption"])
-        st.dataframe(prev_i.head(5), use_container_width=True)
+        st.dataframe(prev_i.head(5))
         head_i = prev_i.columns
         mapa_i = _mapeo(f"inv_{id_i}", head_i, INVENTARIO_REQUIRED_COLS)
         st.markdown(TXT["map_inventario_opc"])
@@ -814,7 +824,7 @@ with tab_overview:
             height=440, margin=dict(l=10, r=10, t=10, b=10),
             legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     with right:
         st.subheader(TXT["estado_title"])
@@ -829,7 +839,7 @@ with tab_overview:
             ))
         figb.update_layout(**PLOTLY_LAYOUT, height=200, margin=dict(l=10, r=30, t=10, b=10),
                            xaxis=axis(), yaxis=axis(), xaxis_title=TXT["estado_axis"], barmode="stack")
-        st.plotly_chart(figb, use_container_width=True)
+        st.plotly_chart(figb)
 
         st.subheader(TXT["modelos_title"])
         modelos = res_f.group_by("modelo_ganador").len().sort("len", descending=True)
@@ -840,7 +850,7 @@ with tab_overview:
         ))
         figm.update_layout(**PLOTLY_LAYOUT, height=220, margin=dict(l=10, r=30, t=10, b=10),
                            xaxis=axis(), xaxis_title=TXT["estado_axis"], yaxis=axis(autorange="reversed"))
-        st.plotly_chart(figm, use_container_width=True)
+        st.plotly_chart(figm)
 
     st.divider()
 
@@ -864,7 +874,7 @@ with tab_overview:
         leg_col.caption(TXT["criticos_caption"].format(n=criticos.height))
         boton_descarga(dl_col, criticos, criticos_base["unique_id"].to_list(), "skus_criticos.xlsx")
 
-    st.dataframe(criticos, use_container_width=True, height=340, hide_index=True)
+    st.dataframe(criticos, height=340, hide_index=True)
 
     st.divider()
 
@@ -926,7 +936,7 @@ with tab_overview:
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0),
         title=dict(text=TXT["chart_title"].format(sku=sku_sel, cd=cd_drill, h=H), font=dict(size=14)),
     )
-    st.plotly_chart(figf, use_container_width=True)
+    st.plotly_chart(figf)
     if row.get("flag_serie_corta"):
         # el MASE de una serie corta sale de un holdout de 1 punto: no es comparable con el de
         # 3 ventanas/h=4 de las series largas. Decirlo, o parecen las mas precisas del tablero.
@@ -991,7 +1001,7 @@ with tab_risk:
         boton_descarga(dl_col, tabla_riesgo, riesgo["unique_id"].to_list(), "riesgo_quiebre.xlsx")
 
         st.dataframe(
-            tabla_riesgo, use_container_width=True, height=420, hide_index=True,
+            tabla_riesgo, height=420, hide_index=True,
             column_config={TXT["risk_sugerido"]: st.column_config.NumberColumn(help=TXT["risk_sugerido_help"])},
         )
 
@@ -1012,7 +1022,7 @@ with tab_risk:
             **PLOTLY_LAYOUT, height=280, margin=dict(l=10, r=10, t=10, b=10),
             xaxis=axis(), yaxis=axis(title=TXT["risk_sales_yaxis"]),
         )
-        st.plotly_chart(figr, use_container_width=True, key=f"chart_{fila['unique_id']}")
+        st.plotly_chart(figr, key=f"chart_{fila['unique_id']}")
 
 # ==================================================================== TAB 3: SKUs en sobre-stock
 with tab_overstock:
@@ -1056,7 +1066,7 @@ with tab_overstock:
         leg_col.caption(TXT["overstock_asof_note"].format(hoy=datetime.date.today().isoformat()))
         boton_descarga(dl_col, tabla_sobre, sobre["unique_id"].to_list(), "sobre_stock.xlsx")
 
-        st.dataframe(tabla_sobre, use_container_width=True, height=420, hide_index=True)
+        st.dataframe(tabla_sobre, height=420, hide_index=True)
 
         st.divider()
         st.subheader(TXT["risk_expander"])
@@ -1075,4 +1085,4 @@ with tab_overstock:
             **PLOTLY_LAYOUT, height=280, margin=dict(l=10, r=10, t=10, b=10),
             xaxis=axis(), yaxis=axis(title=TXT["risk_sales_yaxis"]),
         )
-        st.plotly_chart(figo, use_container_width=True, key=f"chart_over_{fila_o['unique_id']}")
+        st.plotly_chart(figo, key=f"chart_over_{fila_o['unique_id']}")
