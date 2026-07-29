@@ -1,27 +1,52 @@
 {
  "ventas": {
   "columnas": {
-   "sku": "SKU_Coded",
-   "centro_distribucion": "Store_Number",
-   "fecha": "Sold_Date",
-   "cantidad": "Qty_Sold"
+   "sku": "sku",
+   "centro_distribucion": "tienda_id",
+   "fecha": "periodo",
+   "cantidad": "quantity"
   },
-  "formato_fecha": "%Y-%m-%d",
+  "formato_fecha": "%Y-%m",
   "dimensiones": [
-   "Product_Class_Code",
-   "Total_Sale_Value",
-   "On_Promo"
+   "proveedor",
+   "unidad_negocio",
+   "multiplo_compra",
+   "department",
+   "categoria",
+   "class",
+   "subclass",
+   "pais_origen"
   ]
  },
  "inventario": {
   "columnas": {
-   "sku": "SKU_Coded",
-   "existencia": "Stock",
-   "lead_time_dias": "Lead_Time"
+   "sku": "SKU",
+   "existencia": "FÃ­sico en ubicaciÃ³n",
+   "centro_distribucion": "id_tienda"
   },
   "dimensiones": [
-   "Avg_Sales",
-   "CD"
+   "OD | Item Type GT",
+   "USO",
+   "DEPARTAMENTO",
+   "CATEGORIA",
+   "CLASE",
+   "SUB CLASE",
+   "Buyer",
+   "MARCA",
+   "MODELO",
+   "Proveedor",
+   "PAIS DE ORIGEN",
+   "MÃºltiplo para reorden",
+   "PAD",
+   "REABASTECEDOR",
+   "MONEDA SUBSIDIARIA",
+   "CategorÃ­a de artÃ­culos de planificaciÃ³n",
+   "SKU GT",
+   "Ultima Fecha Recibo GT",
+   "Plazo de entrega de la ubicaciÃ³n",
+   "CLASIFICACION GT",
+   "pais",
+   "tienda_nombre"
   ]
  },
  "defaults": {
