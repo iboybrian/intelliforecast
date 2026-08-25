@@ -8,9 +8,7 @@ página que lo usa. No importa streamlit-de-página: no dibuja nada por sí mism
 import json
 from pathlib import Path
 
-import polars as pl
 import streamlit as st
-from PIL import Image
 
 BASE = Path(__file__).parent
 
@@ -94,6 +92,7 @@ STRINGS = {
         "preflight_cli": "Para no bloquear la app, correr en una terminal:",
         "preflight_run_anyway": "Correr igual",
         "no_data_filter": "Ninguna combinación cumple los filtros seleccionados.",
+        "error_no_parquet": "No se encontró resultados.parquet. Corre primero:  python pipeline.py",
         "cd_label": "Centro de distribución",
         "clase_label": "Tipo de SKU",
         "proveedor_label": "Proveedor",
@@ -104,6 +103,24 @@ STRINGS = {
         "tab_overview": "Vista general",
         "tab_risk": "SKUs en riesgo de quiebre",
         "tab_overstock": "SKUs en sobre-stock",
+        "forecast_menu_title": "¿Qué querés hacer?",
+        "forecast_menu_sub": "Elegí una opción — podés volver a este menú en cualquier momento.",
+        "forecast_opt_dashboard_title": "Ver Dashboard con información",
+        "forecast_opt_dashboard_body": "Vista general, KPIs, clasificación de demanda y drill-down por SKU.",
+        "forecast_opt_dashboard_btn": "Ver Dashboard",
+        "forecast_opt_risk_title": "Ver productos cercanos a quiebre de stock",
+        "forecast_opt_risk_body": "Listado priorizado por urgencia con días para quiebre, fecha ideal y cantidad a reordenar.",
+        "forecast_opt_risk_btn": "Ver quiebres",
+        "forecast_opt_over_title": "Ver productos sobrestockeados",
+        "forecast_opt_over_body": "Exceso sobre 120 días de cobertura — qué frenar y qué mover entre centros.",
+        "forecast_opt_over_btn": "Ver sobrestock",
+        "forecast_opt_upload_title": "Quiero subir nuevo forecast",
+        "forecast_opt_upload_body": "Cargá nuevos CSVs de ventas e inventario y recalculá el forecast.",
+        "forecast_opt_upload_btn": "Subir datos",
+        "forecast_back": "← Volver al menú",
+        "forecast_upload_title": "Subir nuevo forecast",
+        "forecast_upload_body": "Usá el formulario de carga para subir tus archivos. Podés abrirlo desde acá o desde el botón de la barra lateral.",
+        "forecast_upload_open": "Abrir formulario de carga",
         "title_overview": "Vista general de inventario",
         "scope_all": "todos los centros",
         "scope_caption": "Ámbito: **{scope}** · {n} combinaciones SKU-CD",
@@ -170,13 +187,60 @@ STRINGS = {
         "overstock_no_results": "No hay combinaciones en sobre-stock para este filtro.",
         "overstock_asof_note": "DOH estimado con la existencia registrada hoy ({hoy}).",
         "col_exceso": "Exceso",
-        # ---- Landing (app_pages/inicio.py)
+        # ---- Landing (app_pages/inicio.py) — comercial
         "landing_hero_title": "Cuánto vas a vender y cuánto stock te falta, por SKU y por centro",
         "landing_hero_sub": "Subís tu histórico de ventas y tu inventario. La app pronostica la demanda "
                             "de los próximos {h} meses para cada combinación SKU-centro, elige el modelo "
                             "que mejor le sirve a cada serie y traduce ese pronóstico en días de cobertura, "
                             "riesgo de quiebre y cantidad a reordenar.",
-        "landing_cta": "Ir al forecast",
+        "landing_hero_badge": "Forecast mensual · KPIs de inventario · Reposición sugerida",
+        "landing_cta": "Ver forecast ahora",
+        "landing_cta_sub": "Sin instalar nada — tus CSVs, tu forecast en minutos",
+        "landing_pain_title": "¿Te suena familiar?",
+        "landing_pain_sub": "Si alguna de estas te describe, IntelliForecast te ahorra horas por semana:",
+        "landing_pain_q1_title": "¿Te topas con quiebres de stock?",
+        "landing_pain_q1_body": "Te enterás tarde, perdés ventas y clientes. La app alerta con semanas de anticipación "
+                                "qué SKU-centro se queda sin cobertura y cuándo reordenar.",
+        "landing_pain_q2_title": "¿Te enredás con múltiples productos a forecastear?",
+        "landing_pain_q2_body": "Cientos de combinaciones SKU-centro, cada una con su estacionalidad. "
+                                "Cada serie compite entre 7 modelos y gana el que menos se equivoca — sin Excel manual.",
+        "landing_pain_q3_title": "¿Querés liberar tiempo a tu equipo?",
+        "landing_pain_q3_body": "Dejan de armar planillas y pasan a decidir: qué comprar, qué frenar y qué mover entre centros. "
+                                "El forecast y los KPIs salen listos para compartir.",
+        "landing_benefits_title": "Qué obtienes",
+        "landing_benefits_sub": "Del histórico al plan de compra, sin pasos manuales en el medio.",
+        "landing_benefit1_title": "Forecast por SKU y centro",
+        "landing_benefit1_body": "Pronóstico mensual a 4 meses, uno por combinación. No es un promedio general: cada serie "
+                                 "elige su mejor modelo por MASE en backtesting.",
+        "landing_benefit2_title": "Alertas de quiebre con fecha y cantidad",
+        "landing_benefit2_body": "Si la cobertura (DOH) no cubre el lead time, aparece en riesgo con días para el quiebre, "
+                                 "fecha ideal de reorden y cantidad redondeada al pack del proveedor.",
+        "landing_benefit3_title": "Sobre-stock visible y accionable",
+        "landing_benefit3_body": "Lista ordenada por exceso sobre 120 días de cobertura: qué dejar de comprar y dónde liberar capital dormido.",
+        "landing_benefit4_title": "Dashboard + Excel listo para comprar",
+        "landing_benefit4_body": "Vista general, riesgo y sobre-stock en 3 pestañas, con filtros y descarga en Excel (KPIs + histórico 24m).",
+        "landing_how_title": "Cómo funciona",
+        "landing_how_sub": "4 pasos, sin código. Tus headers no tienen que coincidir: los mapeás en la carga.",
+        "landing_step1_title": "1 · Subís tus CSVs",
+        "landing_step1_body": "Ventas históricas e inventario, con cualquier nombre de columna. Mapeás cada campo y eliges formatos en un modal.",
+        "landing_step2_title": "2 · Clasificamos la demanda",
+        "landing_step2_body": "Cada serie cae en Suave / Errático / Intermitente / Irregular (SBC) según frecuencia y variabilidad.",
+        "landing_step3_title": "3 · Compiten los modelos",
+        "landing_step3_body": "Regulares: AutoETS, AutoARIMA, Theta, SeasonalNaive. Intermitentes: Croston, TSB, ADIDA. Gana el de menor error.",
+        "landing_step4_title": "4 · Traducimos a inventario",
+        "landing_step4_body": "Cruzamos forecast con existencia: DOH/WOS/MOH, estado y reposición sugerida (1.5× lead time, múltiplo de pack).",
+        "landing_dashboard_title": "Así se ve el dashboard",
+        "landing_dashboard_sub": "Tres vistas que tu equipo puede usar el mismo día. Abajo, el ejemplo real del demo.",
+        "landing_dashboard_caption": "Vista general con clasificación de demanda, estado de inventario y tabla de críticos — filtros por centro, proveedor y categoría.",
+        "landing_trust_title": "Hecho para equipos que compran todos los meses",
+        "landing_trust_body": "Probado con 659 combinaciones SKU-centro reales. Mismos números si lo corres local con `python pipeline.py` o desde la app.",
+        "landing_dialog_title": "Estás por ver tu forecast",
+        "landing_dialog_body": "Al continuar vamos a preparar tu dashboard. **Puede tardar unos segundos** — estamos analizando todas las combinaciones SKU-centro y eligiendo el mejor modelo para cada una.\n\n"
+                               "Es comportamiento normal: hacemos el trabajo pesado por vos para que tu equipo no tenga que armar planillas. Si tu dataset es grande, la primera carga es la que más tarda; después navegas sin espera.",
+        "landing_dialog_confirm": "Entendido, ver forecast",
+        "landing_dialog_cancel": "Seguir acá",
+        "landing_dialog_tip": "Tip: la primera carga es la más pesada — después es instantáneo.",
+        # legacy (compat, ya no usados en la nueva landing pero los dejamos por si otra rama los referencia)
         "landing_metric_series": "Series SKU-centro",
         "landing_metric_skus": "SKUs",
         "landing_metric_cds": "Centros",
@@ -186,34 +250,19 @@ STRINGS = {
         "landing_metric_riesgo": "En riesgo de quiebre",
         "landing_uses_title": "Para qué sirve",
         "landing_use1_title": "Anticipar la demanda",
-        "landing_use1_body": "Un pronóstico mensual por SKU y centro, no un promedio general. "
-                             "Cada serie compite entre varios modelos y gana el que menos se equivoca en su propio histórico.",
+        "landing_use1_body": "Un pronóstico mensual por SKU y centro, no un promedio general.",
         "landing_use2_title": "Comprar antes del quiebre",
-        "landing_use2_body": "Si la cobertura no llega a cubrir el lead time del proveedor, la combinación "
-                             "aparece en riesgo con la fecha ideal de reorden y la cantidad sugerida.",
+        "landing_use2_body": "Si la cobertura no llega a cubrir el lead time, la combinación aparece en riesgo.",
         "landing_use3_title": "Liberar capital dormido",
-        "landing_use3_body": "El sobre-stock se lista con las unidades en exceso sobre 120 días de cobertura: "
-                             "qué frenar de comprar y qué mover entre centros.",
+        "landing_use3_body": "El sobre-stock se lista con las unidades en exceso sobre 120 días.",
         "landing_charts_title": "Así se ve con los datos cargados",
         "landing_chart_fcst_title": "Ejemplo de forecast · {sku} · {cd}",
-        "landing_chart_fcst_caption": "Serie de mayor volumen del dataset. Línea sólida = histórico mensual; "
-                                      "punteada = {h} meses de forecast del modelo ganador (**{modelo}**).",
-        "landing_how_title": "Cómo funciona",
-        "landing_step1_title": "1 · Agregación mensual",
-        "landing_step1_body": "Tus CSVs se agregan a mes calendario por SKU y centro. Los headers son libres: "
-                              "se mapean campo por campo en la pantalla de carga.",
-        "landing_step2_title": "2 · Clasificación SBC",
-        "landing_step2_body": "Cada serie cae en un cuadrante según cada cuánto se vende (ADI) y cuánto varía "
-                              "el tamaño del pedido (CV²): Suave, Errático, Intermitente o Irregular.",
-        "landing_step3_title": "3 · Competencia de modelos",
-        "landing_step3_body": "Series regulares corren AutoETS, AutoARIMA, Theta y SeasonalNaive; las "
-                              "intermitentes corren Croston, TSB y ADIDA. Gana el de menor MASE en backtesting "
-                              "con ventanas móviles.",
-        "landing_step4_title": "4 · KPIs de inventario",
-        "landing_step4_body": "El forecast se cruza con tu existencia: DOH/WOS/MOH, estado (riesgo, normal, "
-                              "sobre-stock) y cantidad de reorden redondeada al múltiplo de pack.",
+        "landing_chart_fcst_caption": "Serie de mayor volumen del dataset.",
+        "landing_hero_badge": "🚀 Análisis inteligente de demanda",
         "landing_no_data": "Todavía no hay resultados calculados. Cargá tus CSVs desde la barra lateral, "
                            "o corré `python pipeline.py` en una terminal.",
+                           
+
     },
     "en": {
         "app_title": "📦 Demand Forecast",
@@ -257,6 +306,7 @@ STRINGS = {
         "preflight_cli": "To avoid blocking the app, run in a terminal:",
         "preflight_run_anyway": "Run anyway",
         "no_data_filter": "No combination matches the selected filters.",
+        "error_no_parquet": "No resultados.parquet found. Run first:  python pipeline.py",
         "cd_label": "Distribution center",
         "clase_label": "SKU type",
         "proveedor_label": "Supplier",
@@ -267,6 +317,24 @@ STRINGS = {
         "tab_overview": "Overview",
         "tab_risk": "SKUs at stockout risk",
         "tab_overstock": "Overstock SKUs",
+        "forecast_menu_title": "What do you want to do?",
+        "forecast_menu_sub": "Pick an option — you can return to this menu anytime.",
+        "forecast_opt_dashboard_title": "View Dashboard with insights",
+        "forecast_opt_dashboard_body": "Overview, KPIs, demand classification and SKU drill-down.",
+        "forecast_opt_dashboard_btn": "View Dashboard",
+        "forecast_opt_risk_title": "View products close to stockout",
+        "forecast_opt_risk_body": "List ranked by urgency with days to stockout, ideal date and reorder qty.",
+        "forecast_opt_risk_btn": "View stockouts",
+        "forecast_opt_over_title": "View overstocked products",
+        "forecast_opt_over_body": "Excess over 120 days of coverage — what to pause and what to move.",
+        "forecast_opt_over_btn": "View overstock",
+        "forecast_opt_upload_title": "Upload new forecast",
+        "forecast_opt_upload_body": "Upload new sales & inventory CSVs and recompute the forecast.",
+        "forecast_opt_upload_btn": "Upload data",
+        "forecast_back": "← Back to menu",
+        "forecast_upload_title": "Upload new forecast",
+        "forecast_upload_body": "Use the upload form to submit your files. You can open it here or from the sidebar button.",
+        "forecast_upload_open": "Open upload form",
         "title_overview": "Inventory overview",
         "scope_all": "all distribution centers",
         "scope_caption": "Scope: **{scope}** · {n} SKU-DC combinations",
@@ -333,13 +401,60 @@ STRINGS = {
         "overstock_no_results": "No combinations at overstock for this filter.",
         "overstock_asof_note": "DOH estimated using stock on record as of today ({hoy}).",
         "col_exceso": "Excess",
-        # ---- Landing (app_pages/inicio.py)
+        # ---- Landing (app_pages/inicio.py) — commercial
         "landing_hero_title": "How much you'll sell and how much stock you're missing, by SKU and center",
         "landing_hero_sub": "Upload your sales history and your inventory. The app forecasts demand for the "
-                            "next {h} months for every SKU-center combination, picks the model that fits each "
-                            "series best, and turns that forecast into days of coverage, stockout risk and "
-                            "reorder quantity.",
+                             "next {h} months for every SKU-center combination, picks the model that fits each "
+                             "series best, and turns that forecast into days of coverage, stockout risk and "
+                             "reorder quantity.",
+        "landing_hero_badge": "Monthly forecast · Inventory KPIs · Suggested reorder",
         "landing_cta": "Go to forecast",
+        "landing_cta_sub": "No setup — your CSVs, your forecast in minutes",
+        "landing_pain_title": "Does this sound familiar?",
+        "landing_pain_sub": "If any of these describe you, IntelliForecast saves hours every week:",
+        "landing_pain_q1_title": "Running into stockouts?",
+        "landing_pain_q1_body": "You find out too late, lose sales and customers. The app flags which SKU-center "
+                                "will run out, with weeks of lead time and the ideal reorder date.",
+        "landing_pain_q2_title": "Juggling hundreds of SKUs to forecast?",
+        "landing_pain_q2_body": "Every SKU-center has its own seasonality. Each series competes across 7 models "
+                                "and the most accurate wins — no manual Excel.",
+        "landing_pain_q3_title": "Want to free up your team's time?",
+        "landing_pain_q3_body": "They stop building spreadsheets and start deciding: what to buy, what to pause, "
+                                "and what to move between centers. Forecast and KPIs come ready to share.",
+        "landing_benefits_title": "What you get",
+        "landing_benefits_sub": "From history to purchase plan, with no manual steps in between.",
+        "landing_benefit1_title": "Forecast per SKU and center",
+        "landing_benefit1_body": "4-month monthly forecast, one per combination. Not a blanket average: each series "
+                                 "picks its best model by MASE in backtesting.",
+        "landing_benefit2_title": "Stockout alerts with date & quantity",
+        "landing_benefit2_body": "If coverage (DOH) doesn't cover lead time, it shows as at-risk with days to stockout, "
+                                 "ideal reorder date and pack-rounded quantity.",
+        "landing_benefit3_title": "Visible, actionable overstock",
+        "landing_benefit3_body": "Ranked list by excess over 120 days of coverage: what to stop buying and where to free idle capital.",
+        "landing_benefit4_title": "Dashboard + Excel ready to buy",
+        "landing_benefit4_body": "Overview, risk and overstock in 3 tabs, with filters and Excel download (KPIs + 24m history).",
+        "landing_how_title": "How it works",
+        "landing_how_sub": "4 steps, no code. Your headers don't need to match — you map them on upload.",
+        "landing_step1_title": "1 · Upload your CSVs",
+        "landing_step1_body": "Sales history and inventory, with any column names. Map each field and pick date formats in a modal.",
+        "landing_step2_title": "2 · We classify demand",
+        "landing_step2_body": "Each series lands in Smooth / Erratic / Intermittent / Lumpy (SBC) by frequency and variability.",
+        "landing_step3_title": "3 · Models compete",
+        "landing_step3_body": "Regular: AutoETS, AutoARIMA, Theta, SeasonalNaive. Intermittent: Croston, TSB, ADIDA. Lowest error wins.",
+        "landing_step4_title": "4 · We translate to inventory",
+        "landing_step4_body": "Forecast meets stock: DOH/WOS/MOH, status and suggested reorder (1.5× lead time, pack multiple).",
+        "landing_dashboard_title": "Dashboard preview",
+        "landing_dashboard_sub": "Three views your team can use the same day. Below, the real demo example.",
+        "landing_dashboard_caption": "Overview with demand classification, inventory status and criticals table — filters by center, supplier and category.",
+        "landing_trust_title": "Built for teams that buy every month",
+        "landing_trust_body": "Tested on 659 real SKU-center combinations. Same numbers whether you run `python pipeline.py` locally or from the app.",
+        "landing_dialog_title": "You're about to see your forecast",
+        "landing_dialog_body": "We'll get your dashboard ready next. **It may take a few seconds** — we're scanning every SKU-center combination and picking the best model for each one.\n\n"
+                               "That's expected: we do the heavy lifting so your team doesn't have to build spreadsheets. With large datasets the first load takes the longest; browsing is instant after that.",
+        "landing_dialog_confirm": "Got it, show forecast",
+        "landing_dialog_cancel": "Stay here",
+        "landing_dialog_tip": "Tip: the first load is the heaviest — then it's instant.",
+        # legacy compat
         "landing_metric_series": "SKU-center series",
         "landing_metric_skus": "SKUs",
         "landing_metric_cds": "Centers",
@@ -349,31 +464,15 @@ STRINGS = {
         "landing_metric_riesgo": "At stockout risk",
         "landing_uses_title": "What it's for",
         "landing_use1_title": "Anticipate demand",
-        "landing_use1_body": "A monthly forecast per SKU and center, not a blanket average. Every series runs "
-                             "a model competition and the one that misses least on its own history wins.",
+        "landing_use1_body": "A monthly forecast per SKU and center, not a blanket average.",
         "landing_use2_title": "Buy before the stockout",
-        "landing_use2_body": "If coverage doesn't reach the supplier's lead time, the combination shows up as "
-                             "at risk, with the ideal reorder date and the suggested quantity.",
+        "landing_use2_body": "If coverage doesn't reach lead time, the combination shows as at risk.",
         "landing_use3_title": "Free up idle capital",
-        "landing_use3_body": "Overstock is listed with the units in excess over 120 days of coverage: what to "
-                             "stop buying and what to move between centers.",
+        "landing_use3_body": "Overstock is listed with units in excess over 120 days.",
         "landing_charts_title": "This is how it looks with data loaded",
         "landing_chart_fcst_title": "Forecast example · {sku} · {cd}",
-        "landing_chart_fcst_caption": "Highest-volume series in the dataset. Solid line = monthly history; "
-                                      "dotted = {h} months of forecast from the winning model (**{modelo}**).",
-        "landing_how_title": "How it works",
-        "landing_step1_title": "1 · Monthly aggregation",
-        "landing_step1_body": "Your CSVs are aggregated to calendar month per SKU and center. Headers are free "
-                              "form: you map them field by field on the upload screen.",
-        "landing_step2_title": "2 · SBC classification",
-        "landing_step2_body": "Every series lands in a quadrant based on how often it sells (ADI) and how much "
-                              "order size varies (CV²): Smooth, Erratic, Intermittent or Lumpy.",
-        "landing_step3_title": "3 · Model competition",
-        "landing_step3_body": "Regular series run AutoETS, AutoARIMA, Theta and SeasonalNaive; intermittent ones "
-                              "run Croston, TSB and ADIDA. Lowest MASE in rolling-origin backtesting wins.",
-        "landing_step4_title": "4 · Inventory KPIs",
-        "landing_step4_body": "The forecast is crossed with your stock: DOH/WOS/MOH, status (risk, normal, "
-                              "overstock) and reorder quantity rounded to the pack multiple.",
+        "landing_chart_fcst_caption": "Highest-volume series in the dataset.",
+        "landing_hero_badge": "🚀 Intelligent demand analysis",
         "landing_no_data": "No results computed yet. Upload your CSVs from the sidebar, or run "
                            "`python pipeline.py` in a terminal.",
     },
@@ -382,7 +481,7 @@ STRINGS = {
 
 def txt():
     """Diccionario de strings del idioma activo. El radio del sidebar escribe st.session_state['lang']."""
-    return STRINGS[st.session_state.get("lang", "es")]
+    return STRINGS[st.session_state.get("lang", "en")]
 
 
 def mapas():
@@ -390,7 +489,7 @@ def mapas():
 
     Los datos canónicos del parquet están en español; estos mapas son solo de vista.
     -> identidad en el idioma en que ya están guardados."""
-    lang = st.session_state.get("lang", "es")
+    lang = st.session_state.get("lang", "en")
     estado_map = ESTADO_EN if lang == "en" else {k: k for k in ESTADO_COLOR_ES}
     estado_color = ESTADO_COLOR_EN if lang == "en" else ESTADO_COLOR_ES
     clase_map = CLASE_ES if lang == "es" else {k: k for k in CLASE_COLOR}
@@ -402,6 +501,8 @@ def cargar_favicon():
     ruta = BASE / "assets" / "intelliforecast.png"
     if not ruta.exists():
         return "📦"
+    from PIL import Image
+
     im = Image.open(ruta).convert("RGBA")
     lado = min(im.size)
     x0 = (im.width - lado) // 2
@@ -414,7 +515,10 @@ def load():
     """(resultados, historico) o (None, None) si el pipeline nunca corrió.
 
     No invalida por cambios en disco: después de re-correr pipeline.py hay que limpiar
-    la cache (st.cache_data.clear(), que es lo que hace el modal de carga)."""
+    la cache (st.cache_data.clear(), que es lo que hace el modal de carga).
+    Import lazy de polars para no penalizar la landing (que no lo necesita)."""
+    import polars as pl
+
     if not (BASE / "resultados.parquet").exists():
         return None, None
     res = pl.read_parquet(BASE / "resultados.parquet")

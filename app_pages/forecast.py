@@ -1,7 +1,8 @@
-"""Dashboard de forecast (3 pestañas: vista general, riesgo de quiebre, sobre-stock).
+"""Forecast con hub menu (elige qué hacer) + vistas dedicadas.
 
-Consume resultados.parquet + historico.parquet (generados por pipeline.py). Página de
-st.navigation: el entry point es app.py, que ya dejó puestos el CSS, el idioma y el sidebar.
+Hub: 4 opciones (dashboard / quiebre / sobrestock / subir). Cada vista tiene
+botón "Volver al menú". Solo el view elegido se renderiza — nada por default.
+El upload se delega al modal de app.py vía flag trigger_upload_dialog.
 """
 
 import datetime
@@ -13,7 +14,7 @@ import streamlit as st
 import xlsxwriter
 
 import core
-from core import (ACCENT_CYAN, ACCENT_ORANGE, ADI_THRESHOLD, BG_DARK, CLASE_COLOR,
+from core import (ACCENT_CYAN, ACCENT_ORANGE, ADI_THRESHOLD, BG_DARK, BG_PANEL, CLASE_COLOR,
                   CV2_THRESHOLD, H, PLOTLY_LAYOUT, TEXT_LIGHT, axis)
 
 TXT = core.txt()
@@ -46,10 +47,9 @@ def boton_descarga(container, df_kpi: pl.DataFrame, ids: list[str], file_name: s
 
 res, hist = core.load()
 if res is None:
-    st.error("No se encontró resultados.parquet. Corre primero:  python pipeline.py")
+    st.error(TXT.get("error_no_parquet", "No se encontró resultados.parquet. Corre primero:  python pipeline.py"))
     st.stop()
 
-# pop y no get: se muestran una vez despues de la carga, no en cada interaccion posterior.
 if avisos_carga := st.session_state.pop("avisos_carga", None):
     with st.expander(TXT["avisos_title"].format(n=len(avisos_carga))):
         for aviso in avisos_carga:
@@ -60,7 +60,67 @@ res = res.with_columns(
     pl.col("clasificacion").replace(CLASE_MAP).alias("clasificacion"),
 )
 
-# ------------------------------------------------------------------ Filtros (una sola fila)
+# ------------------------------------------------------------------ Hub state
+if "forecast_view" not in st.session_state:
+    st.session_state["forecast_view"] = None
+view = st.session_state["forecast_view"]
+
+def volver_menu():
+    st.session_state["forecast_view"] = None
+    st.rerun()
+
+# Hub menu (nada por default)
+if view is None:
+    st.title(TXT.get("forecast_menu_title", "¿Qué querés hacer?"))
+    st.caption(TXT.get("forecast_menu_sub", "Elegí una opción — podés volver a este menú en cualquier momento."))
+    st.divider()
+
+    # Estilo cards reutiliza st-key-card_ de inicio (mismo BG_PANEL)
+    st.html(f"""<style>[class*="st-key-card_hub"]{{background-color:{BG_PANEL};border:1px solid rgba(245,247,250,0.10) !important;border-radius:12px;padding:10px;height:100%}}</style>""")
+
+    r1c1, r1c2 = st.columns(2)
+    r2c1, r2c2 = st.columns(2)
+
+    with r1c1.container(border=True, key="card_hub_dashboard"):
+        st.markdown(f"**{TXT.get('forecast_opt_dashboard_title','Ver Dashboard con información')}**")
+        st.caption(TXT.get("forecast_opt_dashboard_body",""))
+        if st.button(TXT.get("forecast_opt_dashboard_btn","Ver Dashboard"), key="hub_dashboard", type="primary", use_container_width=True, icon=":material/dashboard:"):
+            st.session_state["forecast_view"] = "overview"
+            st.rerun()
+    with r1c2.container(border=True, key="card_hub_risk"):
+        st.markdown(f"**{TXT.get('forecast_opt_risk_title','Ver productos cercanos a quiebre de stock')}**")
+        st.caption(TXT.get("forecast_opt_risk_body",""))
+        if st.button(TXT.get("forecast_opt_risk_btn","Ver quiebres"), key="hub_risk", type="primary", use_container_width=True, icon=":material/warning:"):
+            st.session_state["forecast_view"] = "risk"
+            st.rerun()
+    with r2c1.container(border=True, key="card_hub_over"):
+        st.markdown(f"**{TXT.get('forecast_opt_over_title','Ver productos sobrestockeados')}**")
+        st.caption(TXT.get("forecast_opt_over_body",""))
+        if st.button(TXT.get("forecast_opt_over_btn","Ver sobrestock"), key="hub_over", type="primary", use_container_width=True, icon=":material/inventory_2:"):
+            st.session_state["forecast_view"] = "overstock"
+            st.rerun()
+    with r2c2.container(border=True, key="card_hub_upload"):
+        st.markdown(f"**{TXT.get('forecast_opt_upload_title','Quiero subir nuevo forecast')}**")
+        st.caption(TXT.get("forecast_opt_upload_body",""))
+        if st.button(TXT.get("forecast_opt_upload_btn","Subir datos"), key="hub_upload", use_container_width=True, icon=":material/upload:"):
+            # directo al formulario, sin página intermedia
+            st.session_state["trigger_upload_dialog"] = True
+            st.rerun()
+
+    st.stop()
+
+# ------------------------------------------------------------------ Back button for every view (no se muestra si nunca se entró a una vista)
+if st.button(TXT.get("forecast_back","← Volver al menú"), key="back_menu"):
+    volver_menu()
+st.divider()
+
+# Legacy: si alguien llega con view=="upload" (bookmark viejo), abrir directo
+if view == "upload":
+    st.session_state["trigger_upload_dialog"] = True
+    st.session_state["forecast_view"] = None
+    st.rerun()
+
+# ------------------------------------------------------------------ Filtros compartidos (solo para vistas de datos)
 f1, f2, f3, f4, f5, f6 = st.columns([1, 1.2, 1, 1, 1.3, 0.9])
 
 cds = [TXT["all"]] + sorted(res["centro_distribucion"].unique().to_list())
@@ -92,7 +152,6 @@ if "proveedor" in res.columns and proveedor_sel != TXT["all"]:
 if "categoria" in res.columns and categoria_sel != TXT["all"]:
     res_f = res_f.filter(pl.col("categoria") == categoria_sel)
 
-# dimensiones extra de carga.json: el nombre de la columna es tambien su etiqueta.
 dims_disp = sorted({d for d in core.load_dim_config() if d in res.columns} - {"proveedor", "categoria"})
 if dims_disp:
     elegidas = st.multiselect(TXT["add_filters_label"], dims_disp, default=[])
@@ -107,15 +166,17 @@ if res_f.height == 0:
     st.stop()
 
 skus = sorted(res_f["sku"].unique().to_list())
+# sku selector solo relevante para overview, pero lo mantenemos para consistencia; en risk/overstock se ignora
 sku_sel = f5.selectbox(TXT["sku_label"], skus)
 f6.metric(TXT["combos_metric"], res_f.height)
 
-tab_overview, tab_risk, tab_overstock = st.tabs(
-    [TXT["tab_overview"], TXT["tab_risk"], TXT["tab_overstock"]]
-)
+# estados ya traducidos
+estado_riesgo = ESTADO_MAP["Riesgo de quiebre"]
+estado_sobre = ESTADO_MAP["Sobre-stock"]
+estado_normal = ESTADO_MAP["Normal"]
 
-# ==================================================================== TAB 1: Overview
-with tab_overview:
+# ==================================================================== VIEW: Overview (Dashboard)
+if view == "overview":
     st.title(TXT["title_overview"])
     scope = TXT["scope_all"] if cd_sel == TXT["all"] else cd_sel
     st.caption(TXT["scope_caption"].format(scope=scope, n=res_f.height))
@@ -123,9 +184,6 @@ with tab_overview:
     doh_prom = res_f["doh"].mean()
     wos_prom = res_f["wos"].mean()
     moh_prom = res_f["moh"].mean()
-    estado_riesgo = ESTADO_MAP["Riesgo de quiebre"]
-    estado_sobre = ESTADO_MAP["Sobre-stock"]
-    estado_normal = ESTADO_MAP["Normal"]
     n_riesgo = res_f.filter(pl.col("estado_inventario") == estado_riesgo).height
     n_sobre = res_f.filter(pl.col("estado_inventario") == estado_sobre).height
     n_normal = res_f.filter(pl.col("estado_inventario") == estado_normal).height
@@ -306,14 +364,12 @@ with tab_overview:
     )
     st.plotly_chart(figf)
     if row.get("flag_serie_corta"):
-        # el MASE de una serie corta sale de un holdout de 1 punto: no es comparable con el de
-        # 3 ventanas/h=4 de las series largas. Decirlo, o parecen las mas precisas del tablero.
         st.caption(TXT["short_series_caption"].format(n=row["n_periodos"]))
     else:
         st.caption(TXT["winner_caption"].format(modelo=row["modelo_ganador"], mase=row["mase"]))
 
-# ==================================================================== TAB 2: SKUs en riesgo
-with tab_risk:
+# ==================================================================== VIEW: Riesgo
+elif view == "risk":
     st.title(TXT["risk_header"])
     scope = TXT["scope_all"] if cd_sel == TXT["all"] else cd_sel
 
@@ -340,7 +396,6 @@ with tab_risk:
         riesgo = riesgo.with_columns(
             (pl.lit(hoy).cast(pl.Date) - pl.duration(days=pl.col("dias_atraso"))).alias("fecha_ideal_reorden")
         )
-        # fecha ideal como texto: si ya pasó -> ASAP; si no, fecha (sin hora).
         fecha_txt_expr = (
             pl.when(pl.col("fecha_ideal_reorden") < pl.lit(hoy).cast(pl.Date))
               .then(pl.lit(TXT["risk_asap"]))
@@ -392,12 +447,11 @@ with tab_risk:
         )
         st.plotly_chart(figr, key=f"chart_{fila['unique_id']}")
 
-# ==================================================================== TAB 3: SKUs en sobre-stock
-with tab_overstock:
+# ==================================================================== VIEW: Sobre-stock
+elif view == "overstock":
     st.title(TXT["overstock_header"])
     scope = TXT["scope_all"] if cd_sel == TXT["all"] else cd_sel
 
-    # umbral de sobre-stock: 120 dias (ver estado_inventario en pipeline.py)
     exceso_expr = pl.max_horizontal(
         pl.col("existencia_cd") - pl.col("demanda_diaria_promedio") * 120, pl.lit(0.0)
     )

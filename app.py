@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import sys
 
-import polars as pl
 import streamlit as st
 
 import core
@@ -50,7 +49,7 @@ SEGUNDOS_POR_SERIE = 0.3
 core.inject_css()
 
 if "lang" not in st.session_state:
-    st.session_state["lang"] = "es"
+    st.session_state["lang"] = "en"
 
 st.sidebar.radio(
     "🌐 " + core.STRINGS[st.session_state["lang"]]["lang_label"],
@@ -83,6 +82,8 @@ def contar_series(ruta_ventas, mapa_v):
     """Series (sku x centro) del CSV ya escrito. Con pushdown polars lee solo esas 2 columnas.
     infer_schema_length=0 (todo String) por lo mismo que _preview_df: contar unicos no
     necesita tipos, y una columna mixta no debe tumbar el preflight."""
+    import polars as pl
+
     return (pl.scan_csv(ruta_ventas, infer_schema_length=0)
             .select(pl.struct(mapa_v["sku"], mapa_v["centro_distribucion"]).n_unique())
             .collect().item())
@@ -142,6 +143,8 @@ def _preview_df(file, n=5):
     siquiera se vaya a mapear. El preview solo muestra texto: el tipo real no importa aca."""
     if file is None:
         return None
+    import polars as pl
+
     file.seek(0)
     df = pl.read_csv(file, n_rows=n, infer_schema_length=0)
     file.seek(0)
@@ -260,15 +263,18 @@ def modal_carga_datos():
 
 # ------------------------------------------------------------------ Navegación
 pagina = st.navigation([
-    st.Page("app_pages/inicio.py", title=TXT["nav_inicio"], icon=":material/home:", default=True),
-    st.Page("app_pages/forecast.py", title=TXT["nav_forecast"], icon=":material/insights:"),
+    st.Page("app_pages/inicio.py", title=TXT["nav_inicio"], icon=":material/home:", default=True, url_path="inicio"),
+    st.Page("app_pages/forecast.py", title=TXT["nav_forecast"], icon=":material/insights:", url_path="forecast"),
 ])
 
-# ------------------------------------------------------------------ Sidebar (común a las 2 páginas)
+# ------------------------------------------------------------------ Sidebar (común a las 2 páginas) — solo nav + idioma
+# El upload ahora se dispara directo desde el hub de forecast (trigger_upload_dialog),
+# así que no hace falta botón en sidebar. Se mantiene título/caption + selector idioma.
 st.sidebar.title(TXT["app_title"])
 st.sidebar.caption(TXT["app_caption"])
 
-if st.sidebar.button(TXT["upload_open_button"]):
+# Trigger desde forecast.py hub (opción 4) -> abrir modal directo
+if st.session_state.pop("trigger_upload_dialog", False):
     modal_carga_datos()
 
 pagina.run()
