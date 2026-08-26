@@ -1,6 +1,8 @@
 polars
 plotly
-streamlit
+# >=1.40: st.segmented_control (nav de vistas) y set_page_config llamado de nuevo desde cada
+# pagina para el estado del sidebar. Con una version mas vieja las dos cosas revientan en runtime.
+streamlit>=1.40
 statsforecast
 utilsforecast
 pyarrow
