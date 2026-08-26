@@ -23,7 +23,8 @@ st.set_page_config(page_title="Forecast de Demanda", page_icon=core.cargar_favic
 # en la carga de CSVs (duplicado a propósito, mismo patrón que ADI/CV2_THRESHOLD en core.py).
 RESERVED_DIM_COLS = {
     "unique_id", "adi", "cv2", "clasificacion", "modelo_ganador", "mase",
-    "existencia", "existencia_cd", "ventas_totales_cd", "pack", "lead_time_dias",
+    "existencia", "existencia_cd", "existencia_desconocida", "ventas_totales_cd",
+    "pack", "lead_time_dias",
     "n_periodos", "flag_serie_corta",
     "forecast_mensual_promedio", "demanda_diaria_promedio", "doh", "wos", "moh",
     "estado_inventario", "demanda_lead_time", "cantidad_reorden",

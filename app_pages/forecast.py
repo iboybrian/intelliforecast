@@ -1,8 +1,9 @@
-"""Forecast con hub menu (elige qué hacer) + vistas dedicadas.
+"""Forecast: hub de entrada (4 opciones) + vistas dedicadas con sub-navegación.
 
-Hub: 4 opciones (dashboard / quiebre / sobrestock / subir). Cada vista tiene
-botón "Volver al menú". Solo el view elegido se renderiza — nada por default.
-El upload se delega al modal de app.py vía flag trigger_upload_dialog.
+`forecast_view = None` es el hub; una vez adentro, el segmented_control salta entre las 3
+vistas en 1 clic y "Volver al menú" regresa al hub. Solo se renderiza la vista elegida — las
+tres son caras y st.tabs las dibujaría todas. El upload se delega al modal de app.py vía
+flag trigger_upload_dialog.
 """
 
 import datetime
@@ -15,7 +16,13 @@ import xlsxwriter
 
 import core
 from core import (ACCENT_CYAN, ACCENT_ORANGE, ADI_THRESHOLD, BG_DARK, BG_PANEL, CLASE_COLOR,
-                  CV2_THRESHOLD, H, PLOTLY_LAYOUT, TEXT_LIGHT, axis)
+                  CV2_THRESHOLD, H, MIN_PERIODOS, PLOTLY_LAYOUT, TEXT_LIGHT, axis)
+
+# Sidebar colapsado en el dashboard: la pantalla es angosta para 7 filtros + tablas, y todo lo
+# que vivia ahi ya tiene salida propia aca (nav de vistas, boton de subir datos). Se colapsa, no
+# se esconde: el chevron sigue estando para el idioma y para volver al inicio. Los demas
+# parametros de set_page_config se heredan de la llamada de app.py.
+st.set_page_config(initial_sidebar_state="collapsed")
 
 TXT = core.txt()
 ESTADO_MAP, ESTADO_COLOR, CLASE_MAP = core.mapas()
@@ -60,81 +67,83 @@ res = res.with_columns(
     pl.col("clasificacion").replace(CLASE_MAP).alias("clasificacion"),
 )
 
-# ------------------------------------------------------------------ Hub state
-if "forecast_view" not in st.session_state:
-    st.session_state["forecast_view"] = None
-view = st.session_state["forecast_view"]
+# ------------------------------------------------------------------ Hub + navegacion entre vistas
+VISTAS = {"overview": TXT["tab_overview"], "risk": TXT["tab_risk"], "overstock": TXT["tab_overstock"]}
+view = st.session_state.setdefault("forecast_view", None)
 
-def volver_menu():
-    st.session_state["forecast_view"] = None
+
+def abrir_upload():
+    st.session_state["trigger_upload_dialog"] = True   # el modal vive en app.py
     st.rerun()
 
-# Hub menu (nada por default)
+
+# Hub de entrada: nada de datos por default. Se llega aca al entrar a la pagina y al volver
+# desde cualquier vista.
 if view is None:
     st.title(TXT.get("forecast_menu_title", "¿Qué querés hacer?"))
-    st.caption(TXT.get("forecast_menu_sub", "Elegí una opción — podés volver a este menú en cualquier momento."))
+    st.caption(TXT.get("forecast_menu_sub", ""))
     st.divider()
 
-    # Estilo cards reutiliza st-key-card_ de inicio (mismo BG_PANEL)
+    # las tarjetas reusan el patron st-key-card_ de la landing (mismo BG_PANEL)
     st.html(f"""<style>[class*="st-key-card_hub"]{{background-color:{BG_PANEL};border:1px solid rgba(245,247,250,0.10) !important;border-radius:12px;padding:10px;height:100%}}</style>""")
 
-    r1c1, r1c2 = st.columns(2)
-    r2c1, r2c2 = st.columns(2)
-
-    with r1c1.container(border=True, key="card_hub_dashboard"):
-        st.markdown(f"**{TXT.get('forecast_opt_dashboard_title','Ver Dashboard con información')}**")
-        st.caption(TXT.get("forecast_opt_dashboard_body",""))
-        if st.button(TXT.get("forecast_opt_dashboard_btn","Ver Dashboard"), key="hub_dashboard", type="primary", use_container_width=True, icon=":material/dashboard:"):
-            st.session_state["forecast_view"] = "overview"
-            st.rerun()
-    with r1c2.container(border=True, key="card_hub_risk"):
-        st.markdown(f"**{TXT.get('forecast_opt_risk_title','Ver productos cercanos a quiebre de stock')}**")
-        st.caption(TXT.get("forecast_opt_risk_body",""))
-        if st.button(TXT.get("forecast_opt_risk_btn","Ver quiebres"), key="hub_risk", type="primary", use_container_width=True, icon=":material/warning:"):
-            st.session_state["forecast_view"] = "risk"
-            st.rerun()
-    with r2c1.container(border=True, key="card_hub_over"):
-        st.markdown(f"**{TXT.get('forecast_opt_over_title','Ver productos sobrestockeados')}**")
-        st.caption(TXT.get("forecast_opt_over_body",""))
-        if st.button(TXT.get("forecast_opt_over_btn","Ver sobrestock"), key="hub_over", type="primary", use_container_width=True, icon=":material/inventory_2:"):
-            st.session_state["forecast_view"] = "overstock"
-            st.rerun()
-    with r2c2.container(border=True, key="card_hub_upload"):
-        st.markdown(f"**{TXT.get('forecast_opt_upload_title','Quiero subir nuevo forecast')}**")
-        st.caption(TXT.get("forecast_opt_upload_body",""))
-        if st.button(TXT.get("forecast_opt_upload_btn","Subir datos"), key="hub_upload", use_container_width=True, icon=":material/upload:"):
-            # directo al formulario, sin página intermedia
-            st.session_state["trigger_upload_dialog"] = True
-            st.rerun()
-
+    opciones = [
+        ("dashboard", "overview", ":material/dashboard:", "forecast_opt_dashboard"),
+        ("risk", "risk", ":material/warning:", "forecast_opt_risk"),
+        ("over", "overstock", ":material/inventory_2:", "forecast_opt_over"),
+        ("upload", None, ":material/upload:", "forecast_opt_upload"),
+    ]
+    celdas = [*st.columns(2), *st.columns(2)]
+    for celda, (slug, destino, icono, clave) in zip(celdas, opciones):
+        with celda.container(border=True, key=f"card_hub_{slug}"):
+            st.markdown(f"**{TXT.get(clave + '_title', '')}**")
+            st.caption(TXT.get(clave + "_body", ""))
+            if st.button(TXT.get(clave + "_btn", ""), key=f"hub_{slug}", use_container_width=True,
+                         type="primary" if destino else "secondary", icon=icono):
+                if destino is None:
+                    abrir_upload()
+                st.session_state["forecast_view"] = destino
+                st.rerun()
     st.stop()
 
-# ------------------------------------------------------------------ Back button for every view (no se muestra si nunca se entró a una vista)
-if st.button(TXT.get("forecast_back","← Volver al menú"), key="back_menu"):
-    volver_menu()
-st.divider()
-
-# Legacy: si alguien llega con view=="upload" (bookmark viejo), abrir directo
-if view == "upload":
-    st.session_state["trigger_upload_dialog"] = True
+# segmented_control y no st.tabs: las tres vistas son caras (21k filas + plotly) y tabs las
+# renderiza todas en cada rerun. Desde el hub se entra una vez y despues se salta en 1 clic.
+volver, nav, subir = st.columns([1, 3, 1], vertical_alignment="bottom")
+if volver.button(TXT.get("forecast_back", "← Volver al menú"), key="back_menu", use_container_width=True):
     st.session_state["forecast_view"] = None
     st.rerun()
+view = nav.segmented_control(TXT["nav_forecast"], list(VISTAS), format_func=VISTAS.get,
+                             key="forecast_view", label_visibility="collapsed") or view
+if subir.button(TXT.get("forecast_opt_upload_btn", "Subir datos"), key="nav_upload",
+                use_container_width=True, icon=":material/upload:"):
+    abrir_upload()
+st.divider()
 
 # ------------------------------------------------------------------ Filtros compartidos (solo para vistas de datos)
-f1, f2, f3, f4, f5, f6 = st.columns([1, 1.2, 1, 1, 1.3, 0.9])
+f1, f2, f3, f4, f5, f6, f7 = st.columns([1, 1.2, 1, 1, 1.3, 0.9, 0.8])
 
+# key con prefijo "f_" en todo lo que filtra: es lo que hace posible el boton de limpiar.
+# El sku de drill-down NO lleva key a proposito: sus opciones dependen del filtro y un valor
+# guardado que ya no esta en la lista revienta el selectbox.
 cds = [TXT["all"]] + sorted(res["centro_distribucion"].unique().to_list())
-cd_sel = f1.selectbox(TXT["cd_label"], cds)
+cd_sel = f1.selectbox(TXT["cd_label"], cds, key="f_cd")
 
 clases_disp = sorted(res["clasificacion"].unique().to_list())
-clase_sel = f2.multiselect(TXT["clase_label"], clases_disp, default=clases_disp)
+clase_sel = f2.multiselect(TXT["clase_label"], clases_disp, default=clases_disp, key="f_clase")
+
+with f7:
+    st.write("")   # alinea el boton con la base de los selectbox
+    if st.button(TXT["reset_filters"], use_container_width=True):
+        for k in [k for k in st.session_state if k.startswith("f_")]:
+            del st.session_state[k]
+        st.rerun()
 
 
 def filtro_opcional(container, col, label):
     """selectbox (Todos)+valores si la columna existe; deshabilitado si no."""
     if col in res.columns:
         opciones = [TXT["all"]] + sorted(res[col].drop_nulls().unique().to_list())
-        return container.selectbox(label, opciones)
+        return container.selectbox(label, opciones, key=f"f_{col}")
     container.selectbox(label, [TXT["all"]], disabled=True)
     return TXT["all"]
 
@@ -154,7 +163,7 @@ if "categoria" in res.columns and categoria_sel != TXT["all"]:
 
 dims_disp = sorted({d for d in core.load_dim_config() if d in res.columns} - {"proveedor", "categoria"})
 if dims_disp:
-    elegidas = st.multiselect(TXT["add_filters_label"], dims_disp, default=[])
+    elegidas = st.multiselect(TXT["add_filters_label"], dims_disp, default=[], key="f_dims")
     if elegidas:
         for c, dim in zip(st.columns(len(elegidas)), elegidas):
             val_sel = filtro_opcional(c, dim, dim)
@@ -174,6 +183,7 @@ f6.metric(TXT["combos_metric"], res_f.height)
 estado_riesgo = ESTADO_MAP["Riesgo de quiebre"]
 estado_sobre = ESTADO_MAP["Sobre-stock"]
 estado_normal = ESTADO_MAP["Normal"]
+estado_sindato = ESTADO_MAP["Sin registro"]
 
 # ==================================================================== VIEW: Overview (Dashboard)
 if view == "overview":
@@ -181,20 +191,24 @@ if view == "overview":
     scope = TXT["scope_all"] if cd_sel == TXT["all"] else cd_sel
     st.caption(TXT["scope_caption"].format(scope=scope, n=res_f.height))
 
-    doh_prom = res_f["doh"].mean()
-    wos_prom = res_f["wos"].mean()
-    moh_prom = res_f["moh"].mean()
+    # mediana, no media: DOH no tiene cota superior (un SKU con forecast ~0 da decenas de miles
+    # de dias) y la media terminaba describiendo la cola en vez del catalogo.
+    doh_prom = res_f["doh"].median()
+    wos_prom = res_f["wos"].median()
+    moh_prom = res_f["moh"].median()
     n_riesgo = res_f.filter(pl.col("estado_inventario") == estado_riesgo).height
     n_sobre = res_f.filter(pl.col("estado_inventario") == estado_sobre).height
     n_normal = res_f.filter(pl.col("estado_inventario") == estado_normal).height
+    n_sindato = res_f.filter(pl.col("estado_inventario") == estado_sindato).height
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     c1.metric(TXT["doh_avg"], f"{doh_prom:,.0f} {TXT['days_unit']}" if doh_prom is not None else "—")
     c2.metric(TXT["wos_avg"], f"{wos_prom:,.1f} {TXT['weeks_unit']}" if wos_prom is not None else "—")
     c3.metric(TXT["moh_avg"], f"{moh_prom:,.1f} {TXT['months_unit']}" if moh_prom is not None else "—")
     c4.metric(TXT["risk_metric"], n_riesgo)
     c5.metric(TXT["over_metric"], n_sobre)
     c6.metric(TXT["normal_metric"], n_normal)
+    c7.metric(TXT["sindato_metric"], n_sindato, help=TXT["sindato_help"])
 
     st.divider()
 
@@ -223,10 +237,12 @@ if view == "overview":
             sub = res_f.filter(pl.col("clasificacion") == CLASE_MAP[clase])
             if sub.height == 0:
                 continue
-            fig.add_trace(go.Scatter(
+            # Scattergl + punto chico y translucido: con 20k combinaciones el SVG normal es una
+            # mancha solida y ademas tarda. No se samplea: el punto del grafico es ver la cola.
+            fig.add_trace(go.Scattergl(
                 x=sub["adi"].to_list(), y=sub["cv2"].to_list(),
                 mode="markers", name=CLASE_MAP[clase],
-                marker=dict(size=9, color=color, line=dict(width=0.5, color=BG_DARK), opacity=0.9),
+                marker=dict(size=4, color=color, opacity=0.45),
                 text=[f"{s}·{c}" for s, c in zip(sub["sku"], sub["centro_distribucion"])],
                 hovertemplate="%{text}<br>ADI=%{x:.2f}<br>CV²=%{y:.2f}<extra></extra>",
             ))
@@ -277,11 +293,18 @@ if view == "overview":
         figm.update_layout(**PLOTLY_LAYOUT, height=220, margin=dict(l=10, r=30, t=10, b=10),
                            xaxis=axis(), xaxis_title=TXT["estado_axis"], yaxis=axis(autorange="reversed"))
         st.plotly_chart(figm)
+        # sin esto el grafico se lee como "elegimos SeasonalNaive"; en realidad es la rama de
+        # series cortas, que es lo unico que el comprador necesita saber para confiar o no.
+        n_cortas = res_f.filter(pl.col("flag_serie_corta")).height
+        st.caption(TXT["cobertura_caption"].format(
+            largas=res_f.height - n_cortas, cortas=n_cortas, min=MIN_PERIODOS,
+            pct=100 * n_cortas / res_f.height))
 
     st.divider()
 
     st.subheader(TXT["criticos_title"])
-    criticos_base = res_f.filter(pl.col("estado_inventario") != estado_normal).sort(
+    # "Sin registro" no es critico, es dato faltante: fuera de la lista de accion.
+    criticos_base = res_f.filter(~pl.col("estado_inventario").is_in([estado_normal, estado_sindato])).sort(
         ["estado_inventario", "doh"]
     )
     criticos = criticos_base.select([
@@ -318,7 +341,8 @@ if view == "overview":
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric(TXT["clasificacion_metric"], row["clasificacion"])
     k2.metric(TXT["modelo_metric"], row["modelo_ganador"])
-    k3.metric(TXT["mase_metric"], f"{row['mase']:.2f}")
+    # mase null = escala de train constante: no es medible, no es 0 (ver _mase_valido en pipeline)
+    k3.metric(TXT["mase_metric"], f"{row['mase']:.2f}" if row["mase"] is not None else "—")
     doh_val = row["doh"]
     k4.metric(TXT["doh_metric"], f"{doh_val:,.0f} {TXT['days_unit']}" if doh_val is not None else "∞",
               help=TXT["doh_help"])
@@ -365,7 +389,7 @@ if view == "overview":
     st.plotly_chart(figf)
     if row.get("flag_serie_corta"):
         st.caption(TXT["short_series_caption"].format(n=row["n_periodos"]))
-    else:
+    elif row["mase"] is not None:
         st.caption(TXT["winner_caption"].format(modelo=row["modelo_ganador"], mase=row["mase"]))
 
 # ==================================================================== VIEW: Riesgo
@@ -482,6 +506,10 @@ elif view == "overstock":
             pl.col("forecast_mensual_promedio").round(1).alias(TXT["col_fcst"]),
             pl.col("modelo_ganador").alias(TXT["col_modelo"]),
             pl.col("exceso_unidades").alias(TXT["col_exceso"]),
+            # DOH null aca no es un hueco: es stock sin demanda proyectada, o sea DOH infinito.
+            # Sin esta columna la tabla mostraba una celda vacia y el usuario leia "dato roto".
+            pl.when(pl.col("doh").is_null()).then(pl.lit(TXT["motivo_sin_demanda"]))
+              .otherwise(pl.lit(TXT["motivo_cobertura"])).alias(TXT["col_motivo"]),
         ])
 
         leg_col, dl_col = st.columns([4, 1])

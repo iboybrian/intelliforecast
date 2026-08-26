@@ -11,6 +11,10 @@ import streamlit as st
 import core
 from core import ACCENT_CYAN, ACCENT_ORANGE, BG_DARK, BG_PANEL, H
 
+# contrapeso del "collapsed" de forecast.py: sin esto el sidebar queda cerrado al volver al
+# inicio, porque el estado se hereda de la ultima llamada a set_page_config.
+st.set_page_config(initial_sidebar_state="expanded")
+
 TXT = core.txt()
 
 PAGINA_FORECAST = "app_pages/forecast.py"
@@ -53,15 +57,13 @@ st.html(f"""
 """)
 
 
-@st.dialog(TXT.get("landing_dialog_title", "Estás por ver tu forecast"), width="large")
+@st.dialog(TXT.get("landing_dialog_title", "Un momento antes de entrar"), width="large")
 def dialog_forecast():
-    st.markdown(TXT.get("landing_dialog_body", ""))
-    st.caption(TXT.get("landing_dialog_tip", "Tip: la primera carga es la más pesada — después es instantáneo."))
-    c1, c2 = st.columns([1, 1])
-    if c1.button(TXT.get("landing_dialog_confirm", "Entendido, ver forecast"), type="primary", use_container_width=True):
+    st.warning(TXT.get("landing_dialog_body", ""), icon=":material/hourglass_top:")
+    st.caption(TXT.get("landing_dialog_tip", ""))
+    if st.button(TXT.get("landing_dialog_confirm", "Entendido, ver forecast"),
+                 type="primary", use_container_width=True):
         st.switch_page(PAGINA_FORECAST)
-    if c2.button(TXT.get("landing_dialog_cancel", "Seguir acá"), use_container_width=True):
-        st.rerun()
 
 
 def cta(key):
@@ -71,7 +73,7 @@ def cta(key):
 
 # ------------------------------------------------------------------ Hero
 logo, titulo = st.columns([1, 6], vertical_alignment="center")
-logo.image(str(core.BASE / "assets" / "intelliforecast.png"), width=110)
+logo.image(str(core.BASE / "assets" / "intelliforecast.jpg"), width=110)
 with titulo:
     st.markdown(f"<span class='badge'>{TXT.get('landing_hero_badge', 'Forecast mensual · KPIs de inventario · Reposición sugerida')}</span>", unsafe_allow_html=True)
     st.title(TXT.get("landing_hero_title", "Forecast de Demanda"))
@@ -116,6 +118,7 @@ for i, (col, (icono, tit, cuerpo)) in enumerate(zip(cols_b, benefits)):
 
 # ------------------------------------------------------------------ Cómo funciona
 st.subheader(TXT.get("landing_how_title","Cómo funciona"))
+st.markdown(f"#### {TXT.get('landing_how_lead','')}")
 st.caption(TXT.get("landing_how_sub",""))
 
 pasos = [

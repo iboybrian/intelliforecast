@@ -39,6 +39,14 @@ CV2_THRESHOLD = 0.49
 
 LEAD_TIME_BUFFER = 1.5    # cantidad_reorden cubre 1.5x el lead time (colchon de seguridad)
 
+# Techo de sanidad para 'cantidad'. Los exports del cliente traen filas con las columnas
+# corridas (un campo de mas por comillas mal cerradas en la descripcion): ahi 'cantidad'
+# termina siendo el numero de SKU, del orden de 1e9. Sin este corte 177 filas basura pesaban
+# el 99.99% del volumen total y producian forecasts de 4.4e9 unidades.
+# ponytail: umbral fijo. Si algun cliente vende de verdad >1M unidades/fila, mover a config
+# antes que a deteccion de ancho de fila.
+CANTIDAD_MAX = 1_000_000
+
 MIN_TRAIN = 4             # piso de puntos de entrenamiento en la ventana mas temprana del CV
 # series con menos de esto no alcanzan para el rolling origin -> forecast_corto()
 MIN_PERIODOS = H + STEP_SIZE * (N_WINDOWS - 1) + MIN_TRAIN
@@ -166,11 +174,18 @@ def aggregate_monthly(lf: pl.LazyFrame, dims: list) -> pl.DataFrame:
             pl.col("fecha").dt.truncate(FREQ),
             pl.col("cantidad").cast(pl.Float64, strict=False),
         )
+        # cantidad ilegible o fuera de rango -> null, y se descarta al sumar. Los negativos SI
+        # entran: son devoluciones reales y netean contra la demanda del mes.
+        .with_columns(
+            pl.when(pl.col("cantidad").abs() <= CANTIDAD_MAX).then(pl.col("cantidad")).alias("cantidad")
+        )
         .with_columns((pl.col("sku") + "|" + pl.col("centro_distribucion")).alias("unique_id"))
         # las dims NUNCA van en la llave del group_by: partirian la serie en k filas por mes
         # y statsforecast pronosticaria basura sin avisar.
         .group_by(["unique_id", "sku", "centro_distribucion", "fecha"])
-        .agg(pl.col("cantidad").sum(), *[pl.col(d).drop_nulls().first() for d in dims])
+        .agg(pl.col("cantidad").sum(),
+             pl.col("cantidad").null_count().alias("_descartadas"),
+             *[pl.col(d).drop_nulls().first() for d in dims])
         .sort(["unique_id", "fecha"])
         .collect()
     )
@@ -178,7 +193,11 @@ def aggregate_monthly(lf: pl.LazyFrame, dims: list) -> pl.DataFrame:
     malas = mensual.filter(pl.col("fecha").is_null())["cantidad"].sum()
     if malas:
         print(f"AVISO: {malas:,.0f} unidades con fecha ilegible descartadas (revisar formato de fecha)")
-    return mensual.filter(pl.col("fecha").is_not_null())
+    corruptas = mensual["_descartadas"].sum()
+    if corruptas:
+        print(f"AVISO: {corruptas:,} filas con cantidad ilegible o mayor a {CANTIDAD_MAX:,} "
+              f"descartadas (probable fila corrida en el CSV de ventas)")
+    return mensual.filter(pl.col("fecha").is_not_null()).drop("_descartadas")
 
 
 def classify_demand(ventas: pl.DataFrame) -> pl.DataFrame:
@@ -306,10 +325,17 @@ def build_forecast_table(ventas: pl.DataFrame, clasif: pl.DataFrame) -> pl.DataF
             resultados.append(backtest_and_forecast(sub, fam_cfg["models"], names))
 
     forecast_tabla = pl.concat(resultados, how="vertical_relaxed")
+    # el inf que mete _mase_valido solo existe para que un MASE nulo no gane el sort. En la
+    # salida es ruido (40% de las filas del cliente), rompe el xlsx y no dice nada: vuelve a
+    # null, que en la UI se lee "no medible".
+    forecast_tabla = forecast_tabla.with_columns(
+        pl.when(pl.col("mase").is_finite()).then(pl.col("mase")).alias("mase")
+    )
     return clasif.join(forecast_tabla, on="unique_id")
 
 
-SALIDA_EXISTENCIA = ["sku", "centro_distribucion", "existencia_cd", "pack", "lead_time_dias"]
+SALIDA_EXISTENCIA = ["sku", "centro_distribucion", "existencia_cd", "existencia_desconocida",
+                     "pack", "lead_time_dias"]
 
 
 def _numericos_con_default(df: pl.DataFrame, defaults) -> pl.DataFrame:
@@ -320,6 +346,13 @@ def _numericos_con_default(df: pl.DataFrame, defaults) -> pl.DataFrame:
     perdieron: una columna entera ilegible da existencia 0 -> todo en "Riesgo de quiebre",
     que sin este aviso parece un problema del modelo y no del archivo."""
     presentes = {k: df[k].is_not_null().sum() for k in defaults if k in df.columns}
+    # 'existencia' en blanco no es "cero unidades", es "sin registro en esa ubicacion" (el export
+    # del cliente trae 36k de 50k filas vacias). Se marca ANTES de que el default 0 la vuelva
+    # indistinguible de un quiebre real; los dos caminos de resolver_existencia_por_cd lo propagan.
+    df = df.with_columns(
+        (pl.col("existencia").cast(pl.Float64, strict=False).is_null()
+         if "existencia" in df.columns else pl.lit(True)).alias("_sin_dato")
+    )
     # una sola expresion cubre los dos huecos: columna nunca mapeada (pl.lit) y fila ausente
     # del inventario (el null que deja el left join).
     df = df.with_columns([
@@ -343,7 +376,9 @@ def _existencia_por_cd_directa(ventas_por_cd: pl.DataFrame, inventario: pl.DataF
     # varias filas por sku-CD (bines/ubicaciones dentro de la tienda) se suman; sin esto el
     # join haria fan-out y duplicaria la combinacion en el parquet de resultados.
     inv = filas.group_by(llaves).agg(
-        pl.col("existencia").sum(), pl.col("pack").first(), pl.col("lead_time_dias").first()
+        pl.col("existencia").sum(), pl.col("pack").first(), pl.col("lead_time_dias").first(),
+        # solo es "sin registro" si TODAS las ubicaciones del sku-CD venian en blanco
+        pl.col("_sin_dato").all().alias("existencia_desconocida"),
     )
     if inv.height < filas.height:
         print(f"AVISO: {filas.height - inv.height:,} filas de inventario duplicadas por "
@@ -363,6 +398,8 @@ def _existencia_por_cd_directa(ventas_por_cd: pl.DataFrame, inventario: pl.DataF
     # las combinaciones con ventas y sin fila de inventario quedan null -> default (existencia 0)
     directo = ventas_por_cd.join(inv, on=llaves, how="left").with_columns(
         [pl.col(k).fill_null(v) for k, v in defaults.items()]
+        # sin fila de inventario tampoco hay dato: el null del left join tambien es "desconocida"
+        + [pl.col("existencia_desconocida").fill_null(True)]
     )
     return directo.with_columns(pl.col("existencia").alias("existencia_cd")).select(SALIDA_EXISTENCIA)
 
@@ -383,7 +420,8 @@ def _existencia_por_cd_prorrateada(ventas_por_cd: pl.DataFrame, inventario: pl.D
         pl.when(pl.col("ventas_totales_sku") > 0)
           .then(pl.col("existencia") * pl.col("ventas_totales_cd") / pl.col("ventas_totales_sku"))
           .otherwise(pl.col("existencia") / pl.col("centro_distribucion").count().over("sku"))
-          .alias("existencia_cd")
+          .alias("existencia_cd"),
+        pl.col("_sin_dato").alias("existencia_desconocida"),
     ).select(SALIDA_EXISTENCIA)
 
 
@@ -418,9 +456,9 @@ def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.Data
     tabla = tabla.with_columns(
         (pl.col("forecast_mensual_promedio") / 30.44).alias("demanda_diaria_promedio")
     ).with_columns(
-        pl.when(pl.col("demanda_diaria_promedio") > 1e-6)
+        pl.when((pl.col("demanda_diaria_promedio") > 1e-6) & ~pl.col("existencia_desconocida"))
           .then(pl.col("existencia_cd") / pl.col("demanda_diaria_promedio"))
-          .otherwise(None)
+          .otherwise(None)   # sin demanda o sin dato de existencia -> DOH no significa nada
           .alias("doh")
     ).with_columns([
         (pl.col("doh") / 7).alias("wos"),
@@ -428,7 +466,11 @@ def calcular_kpis(tabla: pl.DataFrame, ventas: pl.DataFrame, inventario: pl.Data
     ])
 
     tabla = tabla.with_columns(
-        pl.when(pl.col("doh").is_null())
+        # primero que nada: sin dato de existencia no hay KPI que valga. Meterlas en "Riesgo de
+        # quiebre" inflaba esa lista con SKU que quiza estan surtidos, y el comprador reordenaba
+        # a ciegas.
+        pl.when(pl.col("existencia_desconocida")).then(pl.lit("Sin registro"))
+          .when(pl.col("doh").is_null())
           .then(pl.when(pl.col("existencia_cd") > 0).then(pl.lit("Sobre-stock")).otherwise(pl.lit("Normal")))
           .when(pl.col("doh") < pl.col("lead_time_dias")).then(pl.lit("Riesgo de quiebre"))
           .when(pl.col("doh") > 120).then(pl.lit("Sobre-stock"))
@@ -513,7 +555,10 @@ def _check():
     crudo = ("Codigo,Bodega,FechaDoc,Unidades,Linea\n"
              "A,N,01/02/2024,5,X\n"
              "A,N,15/02/2024,7,X\n"
-             "A,S,03/01/2024,1,\n")
+             "A,S,03/01/2024,1,\n"
+             # fila corrida: 'Unidades' quedo con el numero de SKU. Sin el corte de CANTIDAD_MAX
+             # esta sola fila pesa mas que todo el resto del archivo.
+             "A,N,20/02/2024,4403000038,X\n")
     cfg = {"columnas": {"sku": "Codigo", "centro_distribucion": "Bodega",
                         "fecha": "FechaDoc", "cantidad": "Unidades"},
            "formato_fecha": "%d/%m/%Y", "dimensiones": ["Linea"]}
@@ -528,6 +573,7 @@ def _check():
     # 01/02/2024 es 1-feb en DD/MM y 2-ene en MM/DD: con el formato equivocado las dos filas
     # de febrero caen en meses distintos y estos tres asserts se caen juntos.
     assert a["fecha"].to_list() == [date(2024, 2, 1)], a["fecha"].to_list()
+    # 12 y no 4403000050: la fila corrida quedo fuera por CANTIDAD_MAX
     assert a["cantidad"].to_list() == [12.0], a["cantidad"].to_list()
     assert a.height == 1, "la dimension partio la serie"
     assert a["Linea"].to_list() == ["X"]
@@ -542,6 +588,8 @@ def _check():
 
     d = pl.DataFrame({"modelo": ["X", "Y"], "mase": [None, 2.0]})
     assert d.with_columns(_mase_valido()).sort("mase")["modelo"][0] == "Y", "el MASE null gano"
+
+    _check_existencia_desconocida()
 
     _check_existencia()
     print("check OK")
@@ -579,6 +627,31 @@ def _check_existencia():
     assert r["existencia_cd"].to_list() == [90.0, 30.0], r["existencia_cd"].to_list()
     # y los defaults siguen entrando donde el archivo no trae la columna
     assert r["pack"].to_list() == [1.0, 1.0] and r["lead_time_dias"].to_list() == [30.0, 30.0]
+
+
+def _check_existencia_desconocida():
+    """Existencia en blanco != 0 unidades: tiene que salir marcada por los dos caminos."""
+    ventas = pl.DataFrame({"sku": ["A", "A"], "centro_distribucion": ["N", "S"],
+                           "cantidad": [30.0, 10.0]})
+
+    # directo: N trae dato (aunque sea 0), S viene en blanco -> solo S es desconocida
+    inv = pl.DataFrame({"sku": ["A", "A"], "centro_distribucion": ["N", "S"],
+                        "existencia": ["0", None]})
+    r = resolver_existencia_por_cd(ventas, inv, INV_DEFAULTS).sort("centro_distribucion")
+    assert r["existencia_desconocida"].to_list() == [False, True], r.to_dicts()
+
+    # una ubicacion con dato basta: no es desconocida aunque la otra venga vacia
+    inv_mix = pl.DataFrame({"sku": ["A"] * 2, "centro_distribucion": ["N", "N"],
+                            "existencia": [None, "40"]})
+    r = resolver_existencia_por_cd(ventas, inv_mix, INV_DEFAULTS).sort("centro_distribucion")
+    assert r.filter(pl.col("centro_distribucion") == "N")["existencia_desconocida"][0] is False
+    # ...y la combinacion sin fila de inventario tampoco tiene dato
+    assert r.filter(pl.col("centro_distribucion") == "S")["existencia_desconocida"][0] is True
+
+    # prorrateo: sin columna de CD, el blanco a nivel SKU marca todos sus centros
+    r = resolver_existencia_por_cd(ventas, pl.DataFrame({"sku": ["A"], "existencia": [None]}),
+                                   INV_DEFAULTS)
+    assert r["existencia_desconocida"].to_list() == [True, True], r.to_dicts()
 
 
 if __name__ == "__main__":

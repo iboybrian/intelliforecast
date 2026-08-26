@@ -15,6 +15,14 @@ BASE = Path(__file__).parent
 ADI_THRESHOLD = 1.32
 CV2_THRESHOLD = 0.49
 H = 4
+MIN_PERIODOS = 16   # duplicado de pipeline.py (ahi se deriva de H/STEP_SIZE/N_WINDOWS/MIN_TRAIN)
+
+# Debajo de este ancho la app se bloquea y pide una computadora (ver inject_css). El mensaje va
+# en los dos idiomas a proposito: el visitante llega en telefono sin haber tocado el selector,
+# y ademas inject_css() corre antes de que app.py fije st.session_state["lang"].
+MOBILE_BREAKPOINT = 768
+MOBILE_MSG = ("Este dashboard necesita una computadora.\\A Abrilo desde una laptop o desktop."
+              "\\A\\A This dashboard needs a computer.\\A Please open it on a laptop or desktop.")
 
 # ---------------------------------------------------------------- Paleta (IntelliVet)
 BG_DARK = "#0E1B2E"
@@ -35,8 +43,11 @@ ESTADO_COLOR_ES = {
     "Riesgo de quiebre": "#E4607A",
     "Sobre-stock": "#B685E8",
     "Normal": "#5FD0A8",
+    # gris deliberado: "Sin registro" no es un estado del inventario, es ausencia de dato
+    "Sin registro": "#7A828E",
 }
-ESTADO_EN = {"Riesgo de quiebre": "Stockout risk", "Sobre-stock": "Overstock", "Normal": "Normal"}
+ESTADO_EN = {"Riesgo de quiebre": "Stockout risk", "Sobre-stock": "Overstock", "Normal": "Normal",
+             "Sin registro": "No stock record"}
 ESTADO_COLOR_EN = {ESTADO_EN[k]: v for k, v in ESTADO_COLOR_ES.items()}
 
 CLASE_ES = {"Smooth": "Suave", "Erratic": "Errático", "Intermittent": "Intermitente", "Lumpy": "Irregular"}
@@ -66,6 +77,7 @@ STRINGS = {
         "dims_ventas_label": "Dimensiones adicionales (ventas)",
         "dims_inventario_label": "Dimensiones adicionales (inventario)",
         "add_filters_label": "➕ Agregar filtros",
+        "reset_filters": "Limpiar",
         "upload_processing": "Procesando datos y recalculando forecast…",
         "upload_success": "Datos actualizados.",
         "upload_error": "Error al procesar los archivos:",
@@ -124,12 +136,14 @@ STRINGS = {
         "title_overview": "Vista general de inventario",
         "scope_all": "todos los centros",
         "scope_caption": "Ámbito: **{scope}** · {n} combinaciones SKU-CD",
-        "doh_avg": "DOH promedio",
-        "wos_avg": "WOS promedio",
-        "moh_avg": "MOH promedio",
+        "doh_avg": "DOH mediano",
+        "wos_avg": "WOS mediano",
+        "moh_avg": "MOH mediano",
         "risk_metric": "🔴 Riesgo de quiebre",
         "over_metric": "🟣 Sobre-stock",
         "normal_metric": "🟢 Normal",
+        "sindato_metric": "⚪ Sin registro",
+        "sindato_help": "Combinaciones con ventas pero sin dato de existencia en el archivo de inventario. No se calculan KPIs: no se sabe si están surtidas.",
         "days_unit": "d",
         "weeks_unit": "sem",
         "months_unit": "mes",
@@ -141,6 +155,7 @@ STRINGS = {
         "estado_caption": "Distribución de combinaciones por estado.",
         "estado_axis": "# combinaciones",
         "modelos_title": "Mix de modelos ganadores",
+        "cobertura_caption": "{largas:,} series tienen ≥{min} meses de historia y usan un modelo ajustado. Las otras **{cortas:,} ({pct:.0f}%) son series cortas**: su forecast repite el último mes, no es un modelo.",
         "criticos_title": "SKUs críticos — riesgo de quiebre y sobre-stock",
         "criticos_caption": "{n} combinaciones fuera de estado Normal. Tabla ordenable — clic en encabezados.",
         "export_button": "Descargar datos de reporte e Histórico de Venta",
@@ -148,6 +163,9 @@ STRINGS = {
         "col_existencia": "Existencia", "col_fcst": "Fcst. mensual", "col_doh": "DOH", "col_wos": "WOS",
         "col_lead": "Lead time (d)", "col_reorden": "Reorden sugerido", "col_modelo": "Modelo", "col_mase": "MASE",
         "col_moh": "MOH", "col_fcst_compra": "Forecast de compra", "col_fecha_ideal": "Fecha ideal reorden",
+        "col_motivo": "Motivo",
+        "motivo_sin_demanda": "Sin demanda proyectada",
+        "motivo_cobertura": "Cobertura > 120 días",
         "col_fcst_prom": "Fcst mensual promedio",
         "col_dias_quiebre": "Días estimados para quiebre",
         "risk_asap": "ASAP (con retraso)",
@@ -188,7 +206,7 @@ STRINGS = {
         "overstock_asof_note": "DOH estimado con la existencia registrada hoy ({hoy}).",
         "col_exceso": "Exceso",
         # ---- Landing (app_pages/inicio.py) — comercial
-        "landing_hero_title": "Cuánto vas a vender y cuánto stock te falta, por SKU y por centro",
+        "landing_hero_title": "Mirá fácil cuánto vas a vender, cuánto stock te falta y cuánto te sobra",
         "landing_hero_sub": "Subís tu histórico de ventas y tu inventario. La app pronostica la demanda "
                             "de los próximos {h} meses para cada combinación SKU-centro, elige el modelo "
                             "que mejor le sirve a cada serie y traduce ese pronóstico en días de cobertura, "
@@ -196,6 +214,11 @@ STRINGS = {
         "landing_hero_badge": "Forecast mensual · KPIs de inventario · Reposición sugerida",
         "landing_cta": "Ver forecast ahora",
         "landing_cta_sub": "Sin instalar nada — tus CSVs, tu forecast en minutos",
+        "landing_dialog_title": "Un momento antes de entrar",
+        "landing_dialog_body": "El dashboard puede tardar unos segundos en abrir: al entrar se cargan "
+                               "los modelos y los resultados de todas las combinaciones SKU-centro.",
+        "landing_dialog_tip": "Es solo la primera vez — después navegás entre vistas sin espera.",
+        "landing_dialog_confirm": "Entendido, ver forecast",
         "landing_pain_title": "¿Te suena familiar?",
         "landing_pain_sub": "Si alguna de estas te describe, IntelliForecast te ahorra horas por semana:",
         "landing_pain_q1_title": "¿Te topas con quiebres de stock?",
@@ -220,6 +243,7 @@ STRINGS = {
         "landing_benefit4_title": "Dashboard + Excel listo para comprar",
         "landing_benefit4_body": "Vista general, riesgo y sobre-stock en 3 pestañas, con filtros y descarga en Excel (KPIs + histórico 24m).",
         "landing_how_title": "Cómo funciona",
+        "landing_how_lead": "Subí tus datos, ¡nosotros hacemos el resto!",
         "landing_how_sub": "4 pasos, sin código. Tus headers no tienen que coincidir: los mapeás en la carga.",
         "landing_step1_title": "1 · Subís tus CSVs",
         "landing_step1_body": "Ventas históricas e inventario, con cualquier nombre de columna. Mapeás cada campo y eliges formatos en un modal.",
@@ -233,13 +257,7 @@ STRINGS = {
         "landing_dashboard_sub": "Tres vistas que tu equipo puede usar el mismo día. Abajo, el ejemplo real del demo.",
         "landing_dashboard_caption": "Vista general con clasificación de demanda, estado de inventario y tabla de críticos — filtros por centro, proveedor y categoría.",
         "landing_trust_title": "Hecho para equipos que compran todos los meses",
-        "landing_trust_body": "Probado con 659 combinaciones SKU-centro reales. Mismos números si lo corres local con `python pipeline.py` o desde la app.",
-        "landing_dialog_title": "Estás por ver tu forecast",
-        "landing_dialog_body": "Al continuar vamos a preparar tu dashboard. **Puede tardar unos segundos** — estamos analizando todas las combinaciones SKU-centro y eligiendo el mejor modelo para cada una.\n\n"
-                               "Es comportamiento normal: hacemos el trabajo pesado por vos para que tu equipo no tenga que armar planillas. Si tu dataset es grande, la primera carga es la que más tarda; después navegas sin espera.",
-        "landing_dialog_confirm": "Entendido, ver forecast",
-        "landing_dialog_cancel": "Seguir acá",
-        "landing_dialog_tip": "Tip: la primera carga es la más pesada — después es instantáneo.",
+        "landing_trust_body": "Corrido sobre datos reales de venta e inventario. Mismos números si lo corres local con `python pipeline.py` o desde la app.",
         # legacy (compat, ya no usados en la nueva landing pero los dejamos por si otra rama los referencia)
         "landing_metric_series": "Series SKU-centro",
         "landing_metric_skus": "SKUs",
@@ -280,6 +298,7 @@ STRINGS = {
         "dims_ventas_label": "Additional dimensions (sales)",
         "dims_inventario_label": "Additional dimensions (inventory)",
         "add_filters_label": "➕ Add filters",
+        "reset_filters": "Clear",
         "upload_processing": "Processing data and recalculating forecast…",
         "upload_success": "Data updated.",
         "upload_error": "Error processing files:",
@@ -338,12 +357,14 @@ STRINGS = {
         "title_overview": "Inventory overview",
         "scope_all": "all distribution centers",
         "scope_caption": "Scope: **{scope}** · {n} SKU-DC combinations",
-        "doh_avg": "Avg. DOH",
-        "wos_avg": "Avg. WOS",
-        "moh_avg": "Avg. MOH",
+        "doh_avg": "Median DOH",
+        "wos_avg": "Median WOS",
+        "moh_avg": "Median MOH",
         "risk_metric": "🔴 Stockout risk",
         "over_metric": "🟣 Overstock",
         "normal_metric": "🟢 Normal",
+        "sindato_metric": "⚪ No stock record",
+        "sindato_help": "Combinations with sales but no stock figure in the inventory file. No KPIs are computed: there is no way to tell whether they are stocked.",
         "days_unit": "d",
         "weeks_unit": "wk",
         "months_unit": "mo",
@@ -355,6 +376,7 @@ STRINGS = {
         "estado_caption": "Distribution of combinations by status.",
         "estado_axis": "# combinations",
         "modelos_title": "Winning model mix",
+        "cobertura_caption": "{largas:,} series have ≥{min} months of history and use a fitted model. The other **{cortas:,} ({pct:.0f}%) are short series**: their forecast just repeats the last month, it is not a model.",
         "criticos_title": "Critical SKUs — stockout risk and overstock",
         "criticos_caption": "{n} combinations outside Normal status. Sortable table — click headers.",
         "export_button": "Download report data and Sales History",
@@ -362,6 +384,9 @@ STRINGS = {
         "col_existencia": "Stock", "col_fcst": "Monthly fcst.", "col_doh": "DOH", "col_wos": "WOS",
         "col_lead": "Lead time (d)", "col_reorden": "Suggested reorder", "col_modelo": "Model", "col_mase": "MASE",
         "col_moh": "MOH", "col_fcst_compra": "Purchase forecast", "col_fecha_ideal": "Ideal reorder date",
+        "col_motivo": "Reason",
+        "motivo_sin_demanda": "No projected demand",
+        "motivo_cobertura": "Coverage > 120 days",
         "col_fcst_prom": "Avg monthly fcst",
         "col_dias_quiebre": "Est. days to stockout",
         "risk_asap": "ASAP (overdue)",
@@ -402,7 +427,7 @@ STRINGS = {
         "overstock_asof_note": "DOH estimated using stock on record as of today ({hoy}).",
         "col_exceso": "Excess",
         # ---- Landing (app_pages/inicio.py) — commercial
-        "landing_hero_title": "How much you'll sell and how much stock you're missing, by SKU and center",
+        "landing_hero_title": "See at a glance how much you'll sell, how much stock you're short and how much you have to spare",
         "landing_hero_sub": "Upload your sales history and your inventory. The app forecasts demand for the "
                              "next {h} months for every SKU-center combination, picks the model that fits each "
                              "series best, and turns that forecast into days of coverage, stockout risk and "
@@ -410,6 +435,11 @@ STRINGS = {
         "landing_hero_badge": "Monthly forecast · Inventory KPIs · Suggested reorder",
         "landing_cta": "Go to forecast",
         "landing_cta_sub": "No setup — your CSVs, your forecast in minutes",
+        "landing_dialog_title": "One moment before you go in",
+        "landing_dialog_body": "The dashboard may take a few seconds to open: entering loads the "
+                               "models and the results for every SKU-center combination.",
+        "landing_dialog_tip": "Only the first time — after that you move between views with no wait.",
+        "landing_dialog_confirm": "Got it, show forecast",
         "landing_pain_title": "Does this sound familiar?",
         "landing_pain_sub": "If any of these describe you, IntelliForecast saves hours every week:",
         "landing_pain_q1_title": "Running into stockouts?",
@@ -434,6 +464,7 @@ STRINGS = {
         "landing_benefit4_title": "Dashboard + Excel ready to buy",
         "landing_benefit4_body": "Overview, risk and overstock in 3 tabs, with filters and Excel download (KPIs + 24m history).",
         "landing_how_title": "How it works",
+        "landing_how_lead": "Upload your data, we do the rest!",
         "landing_how_sub": "4 steps, no code. Your headers don't need to match — you map them on upload.",
         "landing_step1_title": "1 · Upload your CSVs",
         "landing_step1_body": "Sales history and inventory, with any column names. Map each field and pick date formats in a modal.",
@@ -447,13 +478,7 @@ STRINGS = {
         "landing_dashboard_sub": "Three views your team can use the same day. Below, the real demo example.",
         "landing_dashboard_caption": "Overview with demand classification, inventory status and criticals table — filters by center, supplier and category.",
         "landing_trust_title": "Built for teams that buy every month",
-        "landing_trust_body": "Tested on 659 real SKU-center combinations. Same numbers whether you run `python pipeline.py` locally or from the app.",
-        "landing_dialog_title": "You're about to see your forecast",
-        "landing_dialog_body": "We'll get your dashboard ready next. **It may take a few seconds** — we're scanning every SKU-center combination and picking the best model for each one.\n\n"
-                               "That's expected: we do the heavy lifting so your team doesn't have to build spreadsheets. With large datasets the first load takes the longest; browsing is instant after that.",
-        "landing_dialog_confirm": "Got it, show forecast",
-        "landing_dialog_cancel": "Stay here",
-        "landing_dialog_tip": "Tip: the first load is the heaviest — then it's instant.",
+        "landing_trust_body": "Run on real sales and inventory data. Same numbers whether you run `python pipeline.py` locally or from the app.",
         # legacy compat
         "landing_metric_series": "SKU-center series",
         "landing_metric_skus": "SKUs",
@@ -651,6 +676,34 @@ def inject_css():
         }}
         .stApp button:active *, .stApp button:focus *, .stApp button:focus:not(:active) * {{
             color: #1A2733 !important;
+        }}
+
+        /* El dashboard no funciona en pantalla de telefono: 7 filtros, tablas de 11 columnas y
+           scatter de 21k puntos. En vez de servir una version rota, se bloquea y se pide una
+           computadora. Media query y no user-agent: no hay que adivinar el dispositivo, y una
+           ventana de escritorio angosta se arregla ensanchandola. */
+        @media (max-width: {MOBILE_BREAKPOINT}px) {{
+            [data-testid="stAppViewContainer"], section[data-testid="stSidebar"],
+            [data-testid="stSidebarCollapsedControl"], header, footer {{
+                display: none !important;
+            }}
+            body::before {{
+                content: "{MOBILE_MSG}";
+                white-space: pre-line;
+                position: fixed;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+                padding: 2rem;
+                background: {BG_DARK};
+                color: {TEXT_LIGHT};
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 1rem;
+                line-height: 1.6;
+                z-index: 9999;
+            }}
         }}
         </style>
         """,
