@@ -457,7 +457,7 @@ STRINGS = {
                              "reorder quantity.",
         "landing_hero_badge": "Monthly forecast · Inventory KPIs · Suggested reorder",
         "landing_cta": "Go to forecast",
-        "landing_cta_sub": "No setup — your CSVs, your forecast in minutes",
+        "landing_cta_sub": "No difficult set up, your forecast in minutes",
         "landing_dialog_title": "One moment before you go in",
         "landing_dialog_body": "The dashboard may take a few seconds to open: entering loads the "
                                "models and the results for every SKU-center combination.",

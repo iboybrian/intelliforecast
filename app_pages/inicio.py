@@ -64,6 +64,76 @@ st.html(f"""
 [class*="st-key-cta_"] button * {{
     color: {BG_DARK} !important;
 }}
+/* ---- barrido de brillo: solo los 2 CTA del hero y el CTA de cierre ----
+   Selector por key explicito: con el prefijo generico `st-key-cta_` tambien
+   caerian los botones de "Nuestras soluciones", que van planos. */
+[class*="st-key-cta_hero_start"] button,
+[class*="st-key-cta2_hero_contact"] button,
+[class*="st-key-cta_bottom"] button,
+[class*="st-key-cta_svc"] button {{
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    transition: box-shadow 0.35s ease, transform 0.2s ease;
+}}
+[class*="st-key-cta_hero_start"] button::before,
+[class*="st-key-cta2_hero_contact"] button::before,
+[class*="st-key-cta_bottom"] button::before,
+[class*="st-key-cta_svc"] button::before {{
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg,
+        transparent 26%, rgba(255,255,255,0.55) 32%, rgba(255,255,255,0.55) 36%, transparent 42%,
+        transparent 48%, rgba(255,255,255,0.55) 54%, rgba(255,255,255,0.55) 58%, transparent 64%);
+    transform: translateX(-120%);
+    pointer-events: none;
+}}
+/* el flip a naranja del hover generico pelea con el brillo: estos mantienen su color */
+[class*="st-key-cta_hero_start"] button:hover,
+[class*="st-key-cta_bottom"] button:hover,
+[class*="st-key-cta_svc"] button:hover {{
+    background-color: {ACCENT_CYAN} !important;
+}}
+[class*="st-key-cta_hero_start"] button:hover,
+[class*="st-key-cta2_hero_contact"] button:hover {{
+    box-shadow: 0 0 18px rgba(255,255,255,0.35), 0 0 4px rgba(255,255,255,0.6);
+    transform: translateY(-1px);
+}}
+/* el glow blanco no se ve sobre banda clara: esos van con glow azul */
+[class*="st-key-cta_bottom"] button:hover,
+[class*="st-key-cta_svc"] button:hover {{
+    box-shadow: 0 0 18px rgba(15,76,129,0.45), 0 0 4px rgba(15,76,129,0.6);
+    transform: translateY(-1px);
+}}
+[class*="st-key-cta_hero_start"] button:hover::before,
+[class*="st-key-cta2_hero_contact"] button:hover::before,
+[class*="st-key-cta_bottom"] button:hover::before,
+[class*="st-key-cta_svc"] button:hover::before {{
+    animation: cta-sweep 1.94s linear infinite;
+}}
+@keyframes cta-sweep {{
+    0% {{ transform: translateX(-120%); }}
+    37.11% {{ transform: translateX(120%); }}
+    74.23% {{ transform: translateX(-120%); }}
+    100% {{ transform: translateX(-120%); }}
+}}
+/* sin esto el gradiente del barrido tapa el texto y el icono */
+[class*="st-key-cta_hero_start"] button *,
+[class*="st-key-cta2_hero_contact"] button *,
+[class*="st-key-cta_bottom"] button *,
+[class*="st-key-cta_svc"] button * {{
+    position: relative;
+    z-index: 1;
+}}
+/* fade-in de toda la pagina al cargar */
+.stMainBlockContainer {{
+    animation: page-fade-in 0.8s ease-out both;
+}}
+@keyframes page-fade-in {{
+    from {{ opacity: 0; transform: translateY(12px); }}
+    to {{ opacity: 1; transform: none; }}
+}}
 [class*="st-key-cta2_"] button {{
     background-color: transparent !important;
     color: #FFFFFF !important;
@@ -174,8 +244,32 @@ st.html(f"""
    botones queden a la misma altura aunque un titulo use dos lineas */
 [class*="st-key-svc_"] h3 {{ font-size: 1.6rem; margin-bottom: 0.6rem; min-height: 4.4rem; }}
 [class*="st-key-svc_"] [data-testid="stMarkdownContainer"] p {{ min-height: 3.4rem; }}
-/* sin esto el boton estira para llenar la columna y queda mas alto que el otro */
-[class*="st-key-cta_svc"] button {{ height: 52px; }}
+/* sin esto el boton estira para llenar la columna y queda mas alto que el otro.
+   El flex centra la etiqueta: con height fija el texto queda pegado arriba. */
+[class*="st-key-cta_svc"] button {{
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}}
+/* el label de Streamlit se estira a toda la altura y deja el texto pegado arriba:
+   se centra en cada nivel (contenedor del markdown y el parrafo).
+   OJO: nada de tags HTML en estos comentarios. Un tag literal (por ejemplo el de
+   parrafo, entre angulos) hace que Streamlit descarte TODO el bloque de estilos
+   y la landing queda sin CSS, sin error ni aviso. */
+[class*="st-key-cta_svc"] button [data-testid="stMarkdownContainer"] {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+}}
+[class*="st-key-cta_svc"] button p {{
+    margin: 0;
+    line-height: 1.2;
+    /* el min-height del cuerpo de la tarjeta (3.4rem) tambien caia sobre el label */
+    min-height: 0 !important;
+}}
 .svc-icon {{
     position: relative;
     height: 110px;
@@ -222,6 +316,42 @@ st.html(f"""
         margin-top: -7rem !important;
         min-height: 100vh;
         padding: 7rem 5rem 4rem;
+    }}
+    /* la foto del equipo llena la banda de arriba a abajo: la banda pierde el padding
+       vertical, las columnas se estiran y la imagen recorta con object-fit */
+    [class*="st-key-sect_white_team"] {{
+        padding-top: 0;
+        padding-bottom: 0;
+        min-height: 460px;
+    }}
+    [class*="st-key-sect_white_team"] [data-testid="stHorizontalBlock"] {{
+        min-height: 460px;
+        align-items: stretch;
+    }}
+    /* el texto sigue centrado aunque su columna ahora se estire */
+    [class*="st-key-sect_white_team"] [data-testid="stColumn"]:first-child [data-testid="stVerticalBlock"] {{
+        height: 100%;
+        justify-content: center;
+    }}
+    /* cadena flex, no `height: 100%`: contra un padre que solo tiene min-height el
+       porcentaje cae a auto y ademas rompe el stretch de la columna */
+    [class*="st-key-sect_white_team"] [data-testid="stColumn"]:last-child,
+    [class*="st-key-sect_white_team"] [data-testid="stColumn"]:last-child [data-testid="stVerticalBlock"],
+    [class*="st-key-sect_white_team"] [data-testid="stColumn"]:last-child [data-testid="stElementContainer"],
+    [class*="st-key-sect_white_team"] [data-testid="stColumn"]:last-child [data-testid="stFullScreenFrame"],
+    [class*="st-key-sect_white_team"] [data-testid="stColumn"]:last-child [data-testid="stFullScreenFrame"] > div,
+    [class*="st-key-sect_white_team"] [data-testid="stColumn"]:last-child [data-testid="stImage"],
+    [class*="st-key-sect_white_team"] [data-testid="stColumn"]:last-child [data-testid="stImageContainer"] {{
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+    }}
+    [class*="st-key-sect_white_team"] img {{
+        flex: 1 1 auto;
+        width: 100%;
+        min-height: 0;
+        object-fit: cover;
     }}
 }}
 </style>
@@ -325,7 +455,9 @@ with st.container(key="sect_gray_what"):
 
 # ------------------------------------------------------------------ Equipo (banda blanca)
 with st.container(key="sect_white_team"):
-    side_txt, side_img = st.columns([1, 1], vertical_alignment="center")
+    # sin vertical_alignment: la columna tiene que estirarse para que la foto llene la banda;
+    # el texto se centra por CSS
+    side_txt, side_img = st.columns([1, 1])
     with side_txt:
         st.markdown(f"#### {TXT.get('landing_what_side_title', '')}")
         st.markdown(f"- {TXT.get('landing_what_side_b1', '')}")
@@ -339,9 +471,12 @@ with st.container(key="sect_blue_dashboard"):
     st.subheader(TXT.get("landing_dashboard_title", "Así se ve el dashboard"))
     st.caption(TXT.get("landing_dashboard_sub", ""))
 
-    dashboard_path = core.BASE / "assets" / "dashboard.png"
-    quiebre_path = core.BASE / "assets" / "quiebre.png"
-    exceso_path = core.BASE / "assets" / "exceso.png"
+    # capturas por idioma: las viejas estan en español, las nuevas en ingles
+    if st.session_state.get("lang", "en") == "es":
+        capturas = ("dashboard.png", "quiebre.png", "exceso.png")
+    else:
+        capturas = ("dashboardenglish.png", "stockouts.png", "overstock.png")
+    dashboard_path, quiebre_path, exceso_path = (core.BASE / "assets" / n for n in capturas)
 
     if dashboard_path.exists():
         st.image(str(dashboard_path), use_container_width=True)
@@ -352,10 +487,10 @@ with st.container(key="sect_blue_dashboard"):
     g1, g2 = st.columns(2)
     with g1:
         if quiebre_path.exists():
-            st.image(str(quiebre_path), caption="Riesgo de quiebre" if TXT.get("tab_risk") else None, use_container_width=True)
+            st.image(str(quiebre_path), caption=TXT.get("tab_risk"), use_container_width=True)
     with g2:
         if exceso_path.exists():
-            st.image(str(exceso_path), caption="Sobre-stock" if TXT.get("tab_overstock") else None, use_container_width=True)
+            st.image(str(exceso_path), caption=TXT.get("tab_overstock"), use_container_width=True)
 
 # ------------------------------------------------------------------ Servicios (banda blanca)
 # iconos con glifos de Material Symbols: Streamlit sanitiza el <svg> inline, no lo dibuja
