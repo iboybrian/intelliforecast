@@ -11,7 +11,7 @@ import base64
 import streamlit as st
 
 import core
-from core import ACCENT_CYAN, ACCENT_ORANGE, BG_DARK, BG_PANEL, H
+from core import ACCENT_CYAN, ACCENT_ORANGE, BG_DARK, BG_PANEL, H, MOBILE_BREAKPOINT
 
 # contrapeso del "collapsed" de forecast.py: sin esto el sidebar queda cerrado al volver al
 # inicio, porque el estado se hereda de la ultima llamada a set_page_config.
@@ -126,13 +126,38 @@ st.html(f"""
     position: relative;
     z-index: 1;
 }}
-/* fade-in de toda la pagina al cargar */
+/* fade-in de toda la pagina al cargar. Solo opacity, nunca transform: un
+   `transform` animado deja un containing block permanente en Chrome incluso
+   terminando en "none" (getComputedStyle lo muestra como matrix identidad, no
+   como el string "none"), y eso rompe el `position: sticky` de cualquier
+   descendiente -- le costo el sticky de "Como funciona" a esta misma pagina. */
 .stMainBlockContainer {{
     animation: page-fade-in 0.8s ease-out both;
 }}
 @keyframes page-fade-in {{
-    from {{ opacity: 0; transform: translateY(12px); }}
-    to {{ opacity: 1; transform: none; }}
+    from {{ opacity: 0; }}
+    to {{ opacity: 1; }}
+}}
+/* fade-in de cada seccion al entrar en pantalla al hacer scroll. CSS puro via
+   scroll-driven animations (animation-timeline: view()) -- nada de JS ni
+   IntersectionObserver: st.html sanea el HTML y un tag de script inyectado asi
+   no llega a correr (mismo motivo por el que el svg inline tampoco se dibuja).
+   Sin soporte del navegador (fuera de Chromium/Edge recientes) la declaracion de
+   animation-timeline se ignora y queda el fade normal de 0.6s al cargar la pagina,
+   asi que nunca se rompe, solo deja de ser "al scrollear". Solo opacity, mismo
+   motivo que el fade de arriba: nada de transform, rompe el sticky del indice
+   de "Como funciona". */
+[class*="st-key-sect_"] {{
+    animation: scroll-reveal 0.6s ease-out both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 45%;
+}}
+@keyframes scroll-reveal {{
+    from {{ opacity: 0; }}
+    to {{ opacity: 1; }}
+}}
+@media (prefers-reduced-motion: reduce) {{
+    [class*="st-key-sect_"] {{ animation: none; }}
 }}
 [class*="st-key-cta2_"] button {{
     background-color: transparent !important;
@@ -291,6 +316,111 @@ st.html(f"""
     font-size: 118px;
     opacity: 0.28;
 }}
+/* ---- Como funciona: columna sticky + indice que resalta con el scroll ----
+   Sin JS: `view-timeline-name` en cada bloque de paso (columna derecha) crea un
+   timeline con nombre; `timeline-scope` en el contenedor padre hace visible ese
+   nombre fuera de la subrama del paso, para que el item del indice (columna
+   izquierda, sticky) pueda animarse contra el timeline de un bloque hermano.
+   Sin soporte del navegador estas dos declaraciones se ignoran solas: el indice
+   se ve estatico (opacidad pareja) pero el sticky y el layout siguen andando,
+   porque position: sticky no depende de esto. */
+[class*="st-key-sect_white_how"] {{
+    timeline-scope: --how-step-0, --how-step-1, --how-step-2, --how-step-3;
+}}
+[class*="st-key-how_left"] {{
+    position: sticky;
+    top: 100px;
+    height: fit-content;
+    /* Streamlit le pone flex-grow por default a todo stVerticalBlock; sin anularlo
+       este bloque se estira a la altura del padre (ver mas abajo) y el sticky no
+       tiene "aire" alrededor para poder quedarse fijo -- queda pegado al padre y
+       scrollea normal. */
+    flex: 0 0 auto !important;
+}}
+/* la caja que contiene a "how_left" tiene que ser tan alta como la columna
+   derecha para que el sticky tenga recorrido -- sin esto el wrapper intermedio
+   de Streamlit (stVerticalBlock > stLayoutWrapper) queda con altura de
+   contenido (auto), el sticky no tiene donde "viajar" y scrollea normal.
+   Misma cadena flex que en la foto del equipo (sect_white_team) mas arriba. */
+[class*="st-key-sect_white_how"] [data-testid="stColumn"]:first-child {{
+    display: flex;
+    flex-direction: column;
+}}
+[class*="st-key-sect_white_how"] [data-testid="stColumn"]:first-child > [data-testid="stVerticalBlock"] {{
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}}
+[class*="st-key-sect_white_how"] [data-testid="stColumn"]:first-child > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"] {{
+    flex: 1 1 auto;
+    min-height: 0;
+}}
+.how-index {{
+    margin-top: 1.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.7rem;
+}}
+.how-index-item {{
+    border-left: 3px solid rgba(14,27,46,0.15);
+    padding-left: 1rem;
+    opacity: 0.45;
+    font-size: 1.3rem;
+    font-weight: 700;
+}}
+[class*="st-key-how_step_0"],
+[class*="st-key-how_step_1"],
+[class*="st-key-how_step_2"],
+[class*="st-key-how_step_3"] {{
+    min-height: 68vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 2rem 0;
+    max-width: 640px;
+}}
+[class*="st-key-how_step_0"] h3,
+[class*="st-key-how_step_1"] h3,
+[class*="st-key-how_step_2"] h3,
+[class*="st-key-how_step_3"] h3 {{
+    font-size: 2.3rem;
+    margin-bottom: 1.1rem;
+}}
+[class*="st-key-how_step_0"] [data-testid="stMarkdownContainer"] p,
+[class*="st-key-how_step_1"] [data-testid="stMarkdownContainer"] p,
+[class*="st-key-how_step_2"] [data-testid="stMarkdownContainer"] p,
+[class*="st-key-how_step_3"] [data-testid="stMarkdownContainer"] p {{
+    font-size: 1.2rem;
+    line-height: 1.6;
+    opacity: 0.85;
+}}
+[class*="st-key-how_step_0"] {{ view-timeline-name: --how-step-0; }}
+[class*="st-key-how_step_1"] {{ view-timeline-name: --how-step-1; }}
+[class*="st-key-how_step_2"] {{ view-timeline-name: --how-step-2; }}
+[class*="st-key-how_step_3"] {{ view-timeline-name: --how-step-3; }}
+.how-index-item[data-step="0"] {{ animation: how-index-active linear both; animation-timeline: --how-step-0; animation-range: cover 5% cover 95%; }}
+.how-index-item[data-step="1"] {{ animation: how-index-active linear both; animation-timeline: --how-step-1; animation-range: cover 5% cover 95%; }}
+.how-index-item[data-step="2"] {{ animation: how-index-active linear both; animation-timeline: --how-step-2; animation-range: cover 5% cover 95%; }}
+.how-index-item[data-step="3"] {{ animation: how-index-active linear both; animation-timeline: --how-step-3; animation-range: cover 5% cover 95%; }}
+@keyframes how-index-active {{
+    0%   {{ opacity: 0.45; border-left-color: rgba(14,27,46,0.15); }}
+    20%  {{ opacity: 1; border-left-color: {SECT_BLUE}; }}
+    80%  {{ opacity: 1; border-left-color: {SECT_BLUE}; }}
+    100% {{ opacity: 0.45; border-left-color: rgba(14,27,46,0.15); }}
+}}
+@media (max-width: {MOBILE_BREAKPOINT}px) {{
+    [class*="st-key-how_left"] {{
+        position: static !important;
+        top: auto !important;
+    }}
+    [class*="st-key-how_step_0"],
+    [class*="st-key-how_step_1"],
+    [class*="st-key-how_step_2"],
+    [class*="st-key-how_step_3"] {{
+        min-height: 0;
+    }}
+}}
 /* full-bleed: anula el padding del contenedor principal (80px laterales, 96px arriba)
    para que la foto llegue a los bordes. Solo en anchos donde ese padding existe. */
 @media (min-width: 992px) {{
@@ -416,23 +546,38 @@ with st.container(key="sect_blue_why"):
             st.markdown(f"**{tit}**")
             st.caption(cuerpo)
 
-# ------------------------------------------------------------------ Cómo funciona (banda blanca)
-with st.container(key="sect_white_how"):
-    st.subheader(TXT.get("landing_how_title", "Cómo funciona"))
-    st.markdown(f"#### {TXT.get('landing_how_lead', '')}")
-    st.caption(TXT.get("landing_how_sub", ""))
+def _paso_numerado(n, texto):
+    # los strings existentes vienen como "1 · Subís tus CSVs" (es/en) -- se reusa
+    # el cuerpo y se renumera "01." para el formato del indice sticky
+    partes = texto.split(" · ", 1)
+    resto = partes[1] if len(partes) == 2 else texto
+    return f"{n:02d}. {resto}"
 
+
+# ------------------------------------------------------------------ Cómo funciona (banda blanca, sticky scroll)
+with st.container(key="sect_white_how"):
     pasos = [
-        (":material/upload:", TXT.get("landing_step1_title", "1 · Subís tus CSVs"), TXT.get("landing_step1_body", "")),
-        (":material/scatter_plot:", TXT.get("landing_step2_title", "2 · Clasificamos"), TXT.get("landing_step2_body", "")),
-        (":material/trophy:", TXT.get("landing_step3_title", "3 · Compiten modelos"), TXT.get("landing_step3_body", "")),
-        (":material/inventory_2:", TXT.get("landing_step4_title", "4 · Traducimos a inventario"), TXT.get("landing_step4_body", "")),
+        (_paso_numerado(1, TXT.get("landing_step1_title", "1 · Subís tus CSVs")), TXT.get("landing_step1_body", "")),
+        (_paso_numerado(2, TXT.get("landing_step2_title", "2 · Clasificamos")), TXT.get("landing_step2_body", "")),
+        (_paso_numerado(3, TXT.get("landing_step3_title", "3 · Compiten modelos")), TXT.get("landing_step3_body", "")),
+        (_paso_numerado(4, TXT.get("landing_step4_title", "4 · Traducimos a inventario")), TXT.get("landing_step4_body", "")),
     ]
-    for i, (col, (icono, tit, cuerpo)) in enumerate(zip(st.columns(4), pasos)):
-        with col.container(border=True, key=f"card_paso_{i}"):
-            st.markdown(f"### {icono}")
-            st.markdown(f"**{tit}**")
-            st.caption(cuerpo)
+
+    izq, der = st.columns([1, 2])
+    with izq.container(key="how_left"):
+        st.subheader(TXT.get("landing_how_title", "Cómo funciona"))
+        st.markdown(TXT.get("landing_how_lead", ""))
+        st.caption(TXT.get("landing_how_sub", ""))
+        indice = "".join(
+            f"<div class='how-index-item' data-step='{i}'>{titulo}</div>"
+            for i, (titulo, _) in enumerate(pasos)
+        )
+        st.html(f"<div class='how-index'>{indice}</div>")
+
+    for i, (titulo, cuerpo) in enumerate(pasos):
+        with der.container(key=f"how_step_{i}"):
+            st.markdown(f"### {titulo}")
+            st.markdown(cuerpo)
 
 # ------------------------------------------------------------------ Qué obtienes (banda gris)
 with st.container(key="sect_gray_what"):

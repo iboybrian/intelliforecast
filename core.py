@@ -207,10 +207,10 @@ STRINGS = {
         "col_exceso": "Exceso",
         # ---- Landing (app_pages/inicio.py) — comercial
         "landing_hero_title": "Mirá fácil cuánto vas a vender, cuánto stock te falta y cuánto te sobra",
-        "landing_hero_sub": "Subís tu histórico de ventas y tu inventario. La app pronostica la demanda "
-                            "de los próximos {h} meses para cada combinación SKU-centro, elige el modelo "
-                            "que mejor le sirve a cada serie y traduce ese pronóstico en días de cobertura, "
-                            "riesgo de quiebre y cantidad a reordenar.",
+        "landing_hero_sub": "Subís tu histórico de ventas y tu inventario. El algoritmo pronosticará la demanda "
+                            "de los próximos meses para cada combinación SKU-centro, elige el modelo "
+                            "que mejor le sirve a cada serie y genera un reporte claro con cuando un producto "
+                            "esta en sobrestock o riesgo de quiebre y te dice cuanto reordenar.",
         "landing_hero_badge": "Forecast mensual · KPIs de inventario · Reposición sugerida",
         "landing_cta": "Ver forecast ahora",
         "landing_cta_sub": "Sin instalar nada — tus CSVs, tu forecast en minutos",
@@ -246,13 +246,20 @@ STRINGS = {
         "landing_how_lead": "Subí tus datos, ¡nosotros hacemos el resto!",
         "landing_how_sub": "4 pasos, sin código. Tus headers no tienen que coincidir: los mapeás en la carga.",
         "landing_step1_title": "1 · Subís tus CSVs",
-        "landing_step1_body": "Ventas históricas e inventario, con cualquier nombre de columna. Mapeás cada campo y eliges formatos en un modal.",
+        "landing_step1_body": "Ventas históricas e inventario, con cualquier nombre de columna. Mapeás cada campo y eliges formatos en un modal. "
+                              "No hace falta tocar el archivo antes: el mapeo se guarda y se reusa la próxima vez que subís datos.",
         "landing_step2_title": "2 · Clasificamos la demanda",
-        "landing_step2_body": "Cada serie cae en Suave / Errático / Intermitente / Irregular (SBC) según frecuencia y variabilidad.",
+        "landing_step2_body": "Cada serie cae en Suave / Errático / Intermitente / Irregular (SBC) según frecuencia y variabilidad. "
+                              "Esa clasificación decide qué familia de modelos compite después: no es lo mismo pronosticar algo que vendés "
+                              "todos los días que un repuesto que se pide una vez cada dos meses.",
         "landing_step3_title": "3 · Compiten los modelos",
-        "landing_step3_body": "Regulares: AutoETS, AutoARIMA, Theta, SeasonalNaive. Intermitentes: Croston, TSB, ADIDA. Gana el de menor error.",
+        "landing_step3_body": "Regulares: AutoETS, AutoARIMA, Theta, SeasonalNaive. Intermitentes: Croston, TSB, ADIDA. Gana el de menor error. "
+                              "El error se mide con backtesting real, corriendo el modelo sobre meses que ya pasaron y comparando contra lo que "
+                              "efectivamente se vendió — no una promesa teórica.",
         "landing_step4_title": "4 · Traducimos a inventario",
-        "landing_step4_body": "Cruzamos forecast con existencia: DOH/WOS/MOH, estado y reposición sugerida (1.5× lead time, múltiplo de pack).",
+        "landing_step4_body": "Cruzamos forecast con existencia: DOH/WOS/MOH, estado y reposición sugerida (1.5× lead time, múltiplo de pack). "
+                              "El resultado es una cantidad concreta a pedir, no solo una alerta: sabés cuánto comprar y de qué SKU, listo para "
+                              "mandarle al proveedor.",
         "landing_dashboard_title": "Así se ve el dashboard",
         "landing_dashboard_sub": "Tres vistas que tu equipo puede usar el mismo día. Abajo, el ejemplo real del demo.",
         "landing_dashboard_caption": "Vista general con clasificación de demanda, estado de inventario y tabla de críticos — filtros por centro, proveedor y categoría.",
@@ -452,9 +459,8 @@ STRINGS = {
         # ---- Landing (app_pages/inicio.py) — commercial
         "landing_hero_title": "See at a glance how much you'll sell, how much stock you're short and how much you have to spare",
         "landing_hero_sub": "Upload your sales history and your inventory. The app forecasts demand for the "
-                             "next {h} months for every SKU-center combination, picks the model that fits each "
-                             "series best, and turns that forecast into days of coverage, stockout risk and "
-                             "reorder quantity.",
+                             "next months for every SKU-center combination, picks the model that fits each "
+                             "series best, and gives you a report on when its in overstock, when its close to stockout and how much you should reorder",
         "landing_hero_badge": "Monthly forecast · Inventory KPIs · Suggested reorder",
         "landing_cta": "Go to forecast",
         "landing_cta_sub": "No difficult set up, your forecast in minutes",
@@ -490,13 +496,20 @@ STRINGS = {
         "landing_how_lead": "Upload your data, we do the rest!",
         "landing_how_sub": "4 steps, no code. Your headers don't need to match — you map them on upload.",
         "landing_step1_title": "1 · Upload your CSVs",
-        "landing_step1_body": "Sales history and inventory, with any column names. Map each field and pick date formats in a modal.",
+        "landing_step1_body": "Sales history and inventory, with any column names. Map each field and pick date formats in a modal. "
+                              "No need to touch the file beforehand: the mapping is saved and reused the next time you upload data.",
         "landing_step2_title": "2 · We classify demand",
-        "landing_step2_body": "Each series lands in Smooth / Erratic / Intermittent / Lumpy (SBC) by frequency and variability.",
+        "landing_step2_body": "Each series lands in Smooth / Erratic / Intermittent / Lumpy (SBC) by frequency and variability. "
+                              "That classification decides which family of models competes next: forecasting something you sell every day "
+                              "isn't the same as a spare part ordered once every two months.",
         "landing_step3_title": "3 · Models compete",
-        "landing_step3_body": "Regular: AutoETS, AutoARIMA, Theta, SeasonalNaive. Intermittent: Croston, TSB, ADIDA. Lowest error wins.",
+        "landing_step3_body": "Regular: AutoETS, AutoARIMA, Theta, SeasonalNaive. Intermittent: Croston, TSB, ADIDA. Lowest error wins. "
+                              "The error comes from real backtesting, running the model over months that already happened and checking it "
+                              "against what actually sold — not a theoretical promise.",
         "landing_step4_title": "4 · We translate to inventory",
-        "landing_step4_body": "Forecast meets stock: DOH/WOS/MOH, status and suggested reorder (1.5× lead time, pack multiple).",
+        "landing_step4_body": "Forecast meets stock: DOH/WOS/MOH, status and suggested reorder (1.5× lead time, pack multiple). "
+                              "The result is a concrete quantity to order, not just an alert: you know how much to buy and for which SKU, "
+                              "ready to send to the supplier.",
         "landing_dashboard_title": "Dashboard preview",
         "landing_dashboard_sub": "Three views your team can use the same day. Below, the real demo example.",
         "landing_dashboard_caption": "Overview with demand classification, inventory status and criticals table — filters by center, supplier and category.",
