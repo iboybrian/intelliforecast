@@ -11,6 +11,12 @@ Demo de forecast de demanda mensual + KPIs de inventario. Dos piezas:
   - **`core.py`** — lo que comparten las páginas: paleta, `STRINGS` (i18n), `inject_css()`, `load()` de los parquets, `load_dim_config()`, `txt()`/`mapas()` (strings y mapas de traducción del idioma activo). No dibuja nada por sí mismo.
   - **`app_pages/inicio.py`** — landing (default). Explica para qué sirve y cómo funciona; hero a pantalla completa con foto de fondo + CTA arriba y abajo. "Start forecasting" abre `dialog_forecast()`, un `st.dialog` que avisa que el dashboard tarda unos segundos en abrir porque carga modelos y resultados; confirmar hace el `st.switch_page`. "Contact sales" abre `dialog_contact_sales()`, que embebe un Google Form (`GOOGLE_FORM_URL`, vacío por ahora → muestra un aviso en vez de romper; las notificaciones del Form van a los correos de los editores, así no queda ningún mail en el código). Las capturas del dashboard cambian según el idioma activo (`dashboard/quiebre/exceso.png` en español, `dashboardenglish/stockouts/overstock.png` en inglés). Sin parquets no corta: esconde métricas/gráficos y deja la instrucción de correr el pipeline.
   - **`app_pages/forecast.py`** — el dashboard (3 vistas: Vista general, Riesgo de quiebre, Sobre-stock). Lee los parquets; no calcula forecast por sí mismo.
+- **`auth.py`** — el login que separa la landing del dashboard. Perfiles en `.streamlit/secrets.toml` (gitignoreado; en Streamlit Cloud, la UI de Secrets): `[users.<nombre>]` con `hash` (scrypt con salt por usuario, `hmac.compare_digest`, nunca la contraseña en claro) y `url` (el destino propio de ese perfil: ruta de página o link externo `http…`). Crear uno: `python auth.py nuevo <usuario> [url]` imprime el bloque TOML listo para pegar. Self-check: `python auth.py --check`. Sin `secrets.toml` no revienta: el formulario avisa que no hay perfiles.
+
+  **La puerta real está en `app.py`**, no en el diálogo de la landing: antes de `pagina.run()`, si la página elegida es forecast y no hay sesión, dibuja `auth.pantalla_login()` y corta con `st.stop()` — eso cubre la URL directa (`/forecast`) y el link del sidebar, que no pasan por el diálogo. El login del diálogo (`dialog_forecast`, paso 2 después de "Entendido, ver forecast") es comodidad; borrarlo no abre un agujero, borrar el guard de `app.py` sí. Ese paso 2 usa `st.rerun(scope="fragment")`: un rerun de app cerraría el diálogo y el formulario nunca se dibujaría. Sesión en `st.session_state` → un F5 obliga a entrar de nuevo. Lockout de `MAX_INTENTOS` por sesión, así que frena fuerza bruta casual, no a alguien que reconecta.
+
+  **`AppTest` no sirve para probar este flujo**: no re-ejecuta la función del diálogo en el rerun que dispara un botón interno, así que el paso de login nunca aparece y parece roto. El guard de `app.py` sí se prueba con `AppTest` (`switch_page` + formulario); el diálogo, con navegador.
+
 - **`gen_reporte.py`** — aparte del flujo anterior. No lee parquets: arma un HTML autocontenido con los PNG de `assets/` en base64 y lo imprime a PDF con Chrome/Edge headless (`--print-to-pdf`). Rutas de Chrome hardcodeadas para Windows (`CHROME_CANDIDATES`). Los screenshots de `assets/` se actualizan a mano. **No es genérico**: es un entregable comercial de 3 páginas para un cliente concreto — logo, textos, paleta y la URL pública del demo están hardcodeados en `build_html()`. Salidas: `reporte_premiumpet.html` + `reporte_premiumpet.pdf`.
 
 ## Commands
@@ -28,13 +34,17 @@ streamlit run app.py
 # o, si "streamlit" no está en PATH:
 python -m streamlit run app.py
 
+# Perfiles de acceso al dashboard (imprime el bloque para .streamlit/secrets.toml)
+python auth.py nuevo premiumpet            # o: ... premiumpet https://otro-demo.streamlit.app
+python auth.py --check                     # self-check del hash/verify
+
 # Opcional — reporte PDF comercial desde los PNG de assets/ (no toca los parquets).
 python gen_reporte.py
 ```
 
 `rebalance_inventario.py` está **obsoleto — no correrlo tal cual**. Lee `inventario_original.csv`, que es el dataset viejo del demo (60 SKUs `SKU_001…`, headers canónicos `sku,existencia,pack,lead_time_dias`). Contra los datos actuales el join da **0 filas de overlap**, y además escribiría `inventario.csv` con headers canónicos, rompiendo el mapeo de `carga.json`. Sirve solo como referencia de cómo calibrar existencias a un DOH objetivo a partir de `resultados.parquet`; para reusarlo hay que reapuntarlo al inventario vigente y preservar sus headers.
 
-Sin linter ni build; el único test es `pipeline.py --check`. Corrida completa = pipeline.py una vez, luego streamlit. Después de re-correr pipeline.py con la app abierta, hay que limpiar la cache de Streamlit (`st.cache_data.clear()` vía el menú, o reiniciar el proceso) — la app no detecta cambios en el parquet solo por mtime.
+Sin linter ni build; los únicos tests son `pipeline.py --check` y `auth.py --check`. Corrida completa = pipeline.py una vez, luego streamlit. Después de re-correr pipeline.py con la app abierta, hay que limpiar la cache de Streamlit (`st.cache_data.clear()` vía el menú, o reiniciar el proceso) — la app no detecta cambios en el parquet solo por mtime.
 
 Deps no obvias en `requirements.txt`: `pyarrow` (escribir parquet), `XlsxWriter` (export de la app), `Pillow` (logo del sidebar), `utilsforecast` (MASE). Al tocar imports, actualizar el archivo — el deploy en Streamlit Cloud instala solo desde ahí.
 

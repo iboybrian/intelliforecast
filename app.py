@@ -14,6 +14,7 @@ import sys
 
 import streamlit as st
 
+import auth
 import core
 from core import H
 
@@ -263,10 +264,9 @@ def modal_carga_datos():
 
 
 # ------------------------------------------------------------------ Navegación
-pagina = st.navigation([
-    st.Page("app_pages/inicio.py", title=TXT["nav_inicio"], icon=":material/home:", default=True, url_path="inicio"),
-    st.Page("app_pages/forecast.py", title=TXT["nav_forecast"], icon=":material/insights:", url_path="forecast"),
-])
+pag_inicio = st.Page("app_pages/inicio.py", title=TXT["nav_inicio"], icon=":material/home:", default=True, url_path="inicio")
+pag_forecast = st.Page("app_pages/forecast.py", title=TXT["nav_forecast"], icon=":material/insights:", url_path="forecast")
+pagina = st.navigation([pag_inicio, pag_forecast])
 
 # ------------------------------------------------------------------ Sidebar (común a las 2 páginas) — solo nav + idioma
 # El upload ahora se dispara directo desde el hub de forecast (trigger_upload_dialog),
@@ -277,5 +277,13 @@ st.sidebar.caption(TXT["app_caption"])
 # Trigger desde forecast.py hub (opción 4) -> abrir modal directo
 if st.session_state.pop("trigger_upload_dialog", False):
     modal_carga_datos()
+
+auth.sidebar_sesion()
+
+# Unico punto de control: el login del diálogo de la landing es comodidad, esto es la puerta.
+# Cubre tambien la URL directa (/forecast) y el link del sidebar, que no pasan por el diálogo.
+if pagina.url_path == pag_forecast.url_path and not auth.ok():
+    auth.pantalla_login()
+    st.stop()
 
 pagina.run()

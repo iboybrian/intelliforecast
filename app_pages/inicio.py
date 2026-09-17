@@ -10,6 +10,7 @@ import base64
 
 import streamlit as st
 
+import auth
 import core
 from core import ACCENT_CYAN, ACCENT_ORANGE, BG_DARK, BG_PANEL, H, MOBILE_BREAKPOINT
 
@@ -18,8 +19,6 @@ from core import ACCENT_CYAN, ACCENT_ORANGE, BG_DARK, BG_PANEL, H, MOBILE_BREAKP
 st.set_page_config(initial_sidebar_state="expanded")
 
 TXT = core.txt()
-
-PAGINA_FORECAST = "app_pages/forecast.py"
 
 # Pegar acá el embed URL del Google Form (pestaña "<>" del botón Enviar) una vez creado —
 # ver plan/prerequisito. Vacío = el diálogo de Contact Sales muestra un aviso en vez de romper.
@@ -490,11 +489,25 @@ st.html(f"""
 
 @st.dialog(TXT.get("landing_dialog_title", "Un momento antes de entrar"), width="large")
 def dialog_forecast():
-    st.warning(TXT.get("landing_dialog_body", ""), icon=":material/hourglass_top:")
-    st.caption(TXT.get("landing_dialog_tip", ""))
-    if st.button(TXT.get("landing_dialog_confirm", "Entendido, ver forecast"),
-                 type="primary", use_container_width=True):
-        st.switch_page(PAGINA_FORECAST)
+    """Aviso -> login -> destino del perfil. Quien ya tiene sesion abierta salta el login.
+    El control real esta en app.py (este diálogo no es la única puerta al forecast)."""
+    if not st.session_state.get("mostrar_login"):
+        st.warning(TXT.get("landing_dialog_body", ""), icon=":material/hourglass_top:")
+        st.caption(TXT.get("landing_dialog_tip", ""))
+        if st.button(TXT.get("landing_dialog_confirm", "Entendido, ver forecast"),
+                     type="primary", use_container_width=True):
+            if auth.ok():
+                auth.ir_a_destino()
+            else:
+                # scope="fragment": un rerun de app cerraría el diálogo (es un fragment),
+                # y el paso de login nunca llegaría a dibujarse.
+                st.session_state["mostrar_login"] = True
+                st.rerun(scope="fragment")
+        return
+
+    if auth.login_form("login_dialogo"):
+        st.session_state.pop("mostrar_login", None)
+        auth.ir_a_destino()
 
 
 @st.dialog(TXT.get("landing_contact_title", "Hablemos"))
