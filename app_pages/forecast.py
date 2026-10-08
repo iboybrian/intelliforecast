@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import xlsxwriter
 
+import contact
 import core
 from core import (ACCENT_CYAN, ACCENT_ORANGE, ADI_THRESHOLD, BG_DARK, BG_PANEL, CLASE_COLOR,
                   CV2_THRESHOLD, H, MIN_PERIODOS, PLOTLY_LAYOUT, TEXT_LIGHT, axis)
@@ -52,9 +53,10 @@ def boton_descarga(container, df_kpi: pl.DataFrame, ids: list[str], file_name: s
     )
 
 
-res, hist = core.load()
+DEMO = core.es_demo()
+res, hist = core.load(demo=DEMO)
 if res is None:
-    st.error(TXT.get("error_no_parquet", "No se encontró resultados.parquet. Corre primero:  python pipeline.py"))
+    st.error(TXT["error_no_demo"] if DEMO else TXT["error_no_parquet"])
     st.stop()
 
 if avisos_carga := st.session_state.pop("avisos_carga", None):
@@ -72,9 +74,42 @@ VISTAS = {"overview": TXT["tab_overview"], "risk": TXT["tab_risk"], "overstock":
 view = st.session_state.setdefault("forecast_view", None)
 
 
+@st.dialog(TXT["feedback_title"])
+def dialog_feedback():
+    contact.formulario_feedback()
+
+
+@st.dialog(TXT["demo_upload_title"], width="large")
+def dialog_demo_sin_carga():
+    """El demo comparte disco con los CSV del cliente. Subir acá los pisaría."""
+    st.info(TXT["demo_upload_body"])
+    contact.formulario_acceso()
+
+
 def abrir_upload():
+    if DEMO:
+        st.session_state.pop("contact_result_beta", None)
+        dialog_demo_sin_carga()
+        return
     st.session_state["trigger_upload_dialog"] = True   # el modal vive en app.py
     st.rerun()
+
+
+def barra_tester():
+    if DEMO:
+        with st.container(border=True):
+            texto, accion = st.columns([4, 1], vertical_alignment="center")
+            texto.markdown(f"**{TXT['demo_banner_title']}**")
+            texto.caption(TXT["demo_banner"])
+            if accion.button(TXT["feedback_btn"], key="btn_feedback", use_container_width=True):
+                st.session_state.pop("contact_result_feedback", None)
+                dialog_feedback()
+    elif st.button(TXT["feedback_btn"], key="btn_feedback"):
+        st.session_state.pop("contact_result_feedback", None)
+        dialog_feedback()
+
+
+barra_tester()
 
 
 # Hub de entrada: nada de datos por default. Se llega aca al entrar a la pagina y al volver
@@ -102,8 +137,9 @@ if view is None:
                          type="primary" if destino else "secondary", icon=icono):
                 if destino is None:
                     abrir_upload()
-                st.session_state["forecast_view"] = destino
-                st.rerun()
+                else:
+                    st.session_state["forecast_view"] = destino
+                    st.rerun()
     st.stop()
 
 # segmented_control y no st.tabs: las tres vistas son caras (21k filas + plotly) y tabs las

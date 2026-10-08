@@ -9,3 +9,4 @@ build/
 streamlit.log
 .streamlit/secrets.toml
 .env
+contact_submissions.jsonl

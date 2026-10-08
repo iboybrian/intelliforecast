@@ -17,6 +17,13 @@ CV2_THRESHOLD = 0.49
 H = 4
 MIN_PERIODOS = 16   # duplicado de pipeline.py (ahi se deriva de H/STEP_SIZE/N_WINDOWS/MIN_TRAIN)
 
+# Duplicado de pipeline.REQ y de las listas de app.py. La landing los muestra y no puede
+# importar pipeline (arrastra statsforecast). Si cambian allá, cambiar acá.
+COLUMNAS_VENTAS_REQ = ("sku", "centro_distribucion", "fecha", "cantidad")
+COLUMNAS_INVENTARIO_REQ = ("sku", "existencia")
+COLUMNAS_INVENTARIO_OPC = ("centro_distribucion", "pack", "lead_time_dias")
+DEMO_DIR = BASE / "demo"
+
 # Debajo de este ancho la app se bloquea y pide una computadora (ver inject_css). El mensaje va
 # en los dos idiomas a proposito: el visitante llega en telefono sin haber tocado el selector,
 # y ademas inject_css() corre antes de que app.py fije st.session_state["lang"].
@@ -207,13 +214,13 @@ STRINGS = {
         "col_exceso": "Exceso",
         # ---- Landing (app_pages/inicio.py) — comercial
         "landing_hero_title": "Mirá fácil cuánto vas a vender, cuánto stock te falta y cuánto te sobra",
-        "landing_hero_sub": "Subís tu histórico de ventas y tu inventario. El algoritmo pronosticará la demanda "
+        "landing_hero_sub": "Subís tu histórico de ventas y tu inventario. El algoritmo pronostica la demanda "
                             "de los próximos meses para cada combinación SKU-centro, elige el modelo "
-                            "que mejor le sirve a cada serie y genera un reporte claro con cuando un producto "
-                            "esta en sobrestock o riesgo de quiebre y te dice cuanto reordenar.",
+                            "que mejor le sirve a cada serie y te dice cuándo un producto está en sobre-stock, "
+                            "cuándo está cerca de un quiebre y cuánto reordenar.",
         "landing_hero_badge": "Forecast mensual · KPIs de inventario · Reposición sugerida",
-        "landing_cta": "Ver forecast ahora",
-        "landing_cta_sub": "Sin instalar nada — tus CSVs, tu forecast en minutos",
+        "landing_cta": "Probar demo",
+        "landing_cta_sub": "Datos de muestra, sin cuenta. Con el acceso beta cargás tus propios archivos.",
         "landing_dialog_title": "Un momento antes de entrar",
         "landing_dialog_body": "El dashboard puede tardar unos segundos en abrir: al entrar se cargan "
                                "los modelos y los resultados de todas las combinaciones SKU-centro.",
@@ -272,10 +279,10 @@ STRINGS = {
                               "El resultado es una cantidad concreta a pedir, no solo una alerta: sabés cuánto comprar y de qué SKU, listo para "
                               "mandarle al proveedor.",
         "landing_dashboard_title": "Así se ve el dashboard",
-        "landing_dashboard_sub": "Tres vistas que tu equipo puede usar el mismo día. Abajo, el ejemplo real del demo.",
+        "landing_dashboard_sub": "Tres vistas que tu equipo puede usar el mismo día. Las capturas ilustran el producto; el demo interactivo usa datos sintéticos.",
         "landing_dashboard_caption": "Vista general con clasificación de demanda, estado de inventario y tabla de críticos — filtros por centro, proveedor y categoría.",
         "landing_trust_title": "Hecho para equipos que compran todos los meses",
-        "landing_trust_body": "Corrido sobre datos reales de venta e inventario. Mismos números si lo corres local con `python pipeline.py` o desde la app.",
+        "landing_trust_body": "El demo público corre sobre datos sintéticos, claramente ficticios. Con acceso de cliente, el forecast usa tus propias ventas e inventario.",
         "landing_hero_cta_start": "Empezar a pronosticar",
         "landing_hero_cta_contact": "Hablar con ventas",
         "landing_why_title": "Por qué IntelliForecast",
@@ -297,7 +304,7 @@ STRINGS = {
         "landing_service_inhouse_title": "Demand Planning in-house",
         "landing_service_inhouse_body": "Nuestro equipo implementa y opera el forecasting dentro de tu empresa: integración con tus sistemas y acompañamiento continuo.",
         "landing_service_inhouse_cta": "Hablar con ventas",
-        "landing_contact_title": "Hablemos",
+        "landing_contact_title": "Sé tester beta",
         "landing_contact_pending": "Formulario en configuración — mientras tanto, escribinos.",
         # legacy (compat, ya no usados en la nueva landing pero los dejamos por si otra rama los referencia)
         "landing_metric_series": "Series SKU-centro",
@@ -318,8 +325,62 @@ STRINGS = {
         "landing_chart_fcst_title": "Ejemplo de forecast · {sku} · {cd}",
         "landing_chart_fcst_caption": "Serie de mayor volumen del dataset.",
         "landing_hero_badge": "🚀 Análisis inteligente de demanda",
-        "landing_no_data": "Todavía no hay resultados calculados. Cargá tus CSVs desde la barra lateral, "
-                           "o corré `python pipeline.py` en una terminal.",
+        "landing_no_data": "Todavía no hay resultados calculados. Con una cuenta de cliente, la carga de CSVs está en el forecast.",
+        "demo_cta": "Probar demo",
+        "demo_beta_cta": "Sé tester beta",
+        "demo_client_cta": "Ya tengo acceso",
+        "demo_login_hint": "¿Sin usuario? Podés recorrer el forecast completo con datos de muestra.",
+        "demo_sidebar": "Viendo el demo con datos sintéticos",
+        "demo_salir": "Salir del demo",
+        "demo_banner_title": "Demo con datos sintéticos",
+        "demo_banner": "Los SKU, centros y proveedores de esta vista son ficticios. No hay datos de una empresa real.",
+        "demo_upload_title": "La carga es parte del acceso de cliente",
+        "demo_upload_body": "En el demo no se pueden subir archivos: eso reemplazaría los datos de muestra. Pedí acceso beta para probar con los tuyos.",
+        "error_no_demo": "No se encontró el demo de muestra. Falta demo/resultados.parquet.",
+        "feedback_btn": "Enviar comentarios",
+        "feedback_title": "¿Qué tal te fue?",
+        "feedback_hint": "Contanos qué funcionó y qué no. Llega al mismo lugar que el pedido de acceso.",
+        "feedback_worked": "Qué funcionó",
+        "feedback_didnt": "Qué no funcionó",
+        "feedback_email": "Email (opcional, si querés que te respondamos)",
+        "feedback_send": "Enviar",
+        "feedback_need_one": "Contanos al menos una cosa que funcionó o que no.",
+        "form_intro": "Contanos de tu operación y te escribimos para el acceso de tester, o para conversar con el equipo.",
+        "form_nombre": "Nombre",
+        "form_email": "Email",
+        "form_empresa": "Empresa",
+        "form_rol": "Rol",
+        "form_industria": "Industria",
+        "form_skus": "Cantidad aproximada de SKUs",
+        "form_centros": "Centros o bodegas (aproximado)",
+        "form_mensaje": "Mensaje",
+        "form_enviar": "Enviar",
+        "form_ok": "Recibimos tu mensaje. Te escribimos pronto.",
+        "form_fallback": "No hay un envío automático configurado. Escribinos a {email} — tus respuestas quedan abajo para copiar.",
+        "form_fallback_fail": "No pudimos entregar el mensaje. Escribinos a {email} — tus respuestas quedan abajo para copiar.",
+        "form_unconfigured": "El formulario no tiene destino ni email de contacto. Quien administra la app tiene que configurar [contact] en los secrets.",
+        "form_mailto": "Abrir email",
+        "form_error_email": "Ingresá un email válido.",
+        "form_error_required": "Completá nombre, email y empresa.",
+        "columns_title": "Qué columnas esperamos",
+        "columns_sub": "El forecast usa estos campos. Si tus headers se llaman distinto, los mapeás al subir el archivo.",
+        "columns_sales_title": "**Ventas históricas — obligatorias**",
+        "columns_inv_title": "**Inventario — obligatorias**",
+        "columns_inv_opt_title": "**Inventario — opcionales**",
+        "columns_extra": "Cualquier otra columna (por ejemplo proveedor o categoría) viaja como dimensión y se puede filtrar. En las plantillas están de muestra.",
+        "columns_units": "La existencia tiene que estar en las mismas unidades que la cantidad vendida.",
+        "columns_dates": "Fechas aceptadas: YYYY-MM-DD, DD/MM/YYYY, MM/DD/YYYY, YYYY-MM, o detección automática.",
+        "columns_blank": "Una existencia en blanco no es cero: esa combinación queda como Sin registro, fuera de la lista de quiebre. La última fila de la plantilla de inventario lo muestra.",
+        "columns_download_sales": "Descargar plantilla de ventas",
+        "columns_download_inv": "Descargar plantilla de inventario",
+        "colhelp_sku": "Identificador del producto.",
+        "colhelp_cd_ventas": "Centro, tienda o bodega donde se vendió.",
+        "colhelp_fecha": "Fecha de la venta. Puede ser día, semana o mes: se agrega a mes antes de pronosticar.",
+        "colhelp_cantidad": "Unidades vendidas en ese período. Los negativos entran como devoluciones.",
+        "colhelp_existencia": "Unidades en stock hoy.",
+        "colhelp_cd_inv": "Si viene, el stock se cruza con las ventas de ese mismo centro. Si no, el stock del SKU se reparte entre sus centros según el histórico.",
+        "colhelp_pack": "Múltiplo de compra. Si la columna no está, se usa 1.",
+        "colhelp_lead": "Días de reposición. Si la columna no está, se usan 30. Un lead time inventado cambia el estado de inventario.",
                            
 
     },
@@ -471,10 +532,10 @@ STRINGS = {
         "landing_hero_title": "See at a glance how much you'll sell, how much stock you're short and how much you have to spare",
         "landing_hero_sub": "Upload your sales history and your inventory. The app forecasts demand for the "
                              "next months for every SKU-center combination, picks the model that fits each "
-                             "series best, and gives you a report on when its in overstock, when its close to stockout and how much you should reorder",
+                             "series best, and gives you a report on when it's in overstock, when it's close to stockout and how much you should reorder.",
         "landing_hero_badge": "Monthly forecast · Inventory KPIs · Suggested reorder",
-        "landing_cta": "Go to forecast",
-        "landing_cta_sub": "No difficult set up, your forecast in minutes",
+        "landing_cta": "Try the demo",
+        "landing_cta_sub": "Sample data, no account. Beta access is how you load your own files.",
         "landing_dialog_title": "One moment before you go in",
         "landing_dialog_body": "The dashboard may take a few seconds to open: entering loads the "
                                "models and the results for every SKU-center combination.",
@@ -533,10 +594,10 @@ STRINGS = {
                               "The result is a concrete quantity to order, not just an alert: you know how much to buy and for which SKU, "
                               "ready to send to the supplier.",
         "landing_dashboard_title": "Dashboard preview",
-        "landing_dashboard_sub": "Three views your team can use the same day. Below, the real demo example.",
+        "landing_dashboard_sub": "Three views your team can use the same day. The screenshots illustrate the product; the interactive demo uses synthetic data.",
         "landing_dashboard_caption": "Overview with demand classification, inventory status and criticals table — filters by center, supplier and category.",
         "landing_trust_title": "Built for teams that buy every month",
-        "landing_trust_body": "Run on real sales and inventory data. Same numbers whether you run `python pipeline.py` locally or from the app.",
+        "landing_trust_body": "The public demo runs on clearly fictional sample data. With client access, the forecast uses your own sales and inventory.",
         "landing_hero_cta_start": "Start forecasting",
         "landing_hero_cta_contact": "Contact sales",
         "landing_why_title": "Why IntelliForecast",
@@ -558,7 +619,7 @@ STRINGS = {
         "landing_service_inhouse_title": "In-house Demand Planning",
         "landing_service_inhouse_body": "Our team implements and runs the forecasting inside your company: integration with your systems and ongoing support.",
         "landing_service_inhouse_cta": "Contact sales",
-        "landing_contact_title": "Let's talk",
+        "landing_contact_title": "Become a beta tester",
         "landing_contact_pending": "Form is being set up — reach out to us in the meantime.",
         # legacy compat
         "landing_metric_series": "SKU-center series",
@@ -579,8 +640,62 @@ STRINGS = {
         "landing_chart_fcst_title": "Forecast example · {sku} · {cd}",
         "landing_chart_fcst_caption": "Highest-volume series in the dataset.",
         "landing_hero_badge": "🚀 Intelligent demand analysis",
-        "landing_no_data": "No results computed yet. Upload your CSVs from the sidebar, or run "
-                           "`python pipeline.py` in a terminal.",
+        "landing_no_data": "No results computed yet. With a client account, CSV upload lives on the forecast page.",
+        "demo_cta": "Try the demo",
+        "demo_beta_cta": "Become a beta tester",
+        "demo_client_cta": "I already have access",
+        "demo_login_hint": "No account? You can walk through the full forecast on sample data.",
+        "demo_sidebar": "Viewing the demo on synthetic data",
+        "demo_salir": "Leave demo",
+        "demo_banner_title": "Demo on synthetic data",
+        "demo_banner": "The SKUs, centers and suppliers in this view are fictional. There is no real company data here.",
+        "demo_upload_title": "Upload is part of client access",
+        "demo_upload_body": "The demo can't accept file uploads — that would replace the sample. Request beta access to try your own files.",
+        "error_no_demo": "The sample demo is missing. demo/resultados.parquet was not found.",
+        "feedback_btn": "Send feedback",
+        "feedback_title": "How did it go?",
+        "feedback_hint": "Tell us what worked and what didn't. It goes to the same place as an access request.",
+        "feedback_worked": "What worked",
+        "feedback_didnt": "What didn't",
+        "feedback_email": "Email (optional, if you want a reply)",
+        "feedback_send": "Send",
+        "feedback_need_one": "Tell us at least one thing that worked or didn't.",
+        "form_intro": "Tell us about your operation and we'll write back about tester access, or to talk with the team.",
+        "form_nombre": "Name",
+        "form_email": "Email",
+        "form_empresa": "Company",
+        "form_rol": "Role",
+        "form_industria": "Industry",
+        "form_skus": "Approximate number of SKUs",
+        "form_centros": "Centers or warehouses (approximate)",
+        "form_mensaje": "Message",
+        "form_enviar": "Send",
+        "form_ok": "We got your message. We'll write back soon.",
+        "form_fallback": "Automatic delivery isn't configured. Email us at {email} — your answers are below if you want to paste them.",
+        "form_fallback_fail": "We couldn't deliver the message. Email us at {email} — your answers are below if you want to paste them.",
+        "form_unconfigured": "The form has no destination and no contact email. Whoever runs the app needs to set [contact] in secrets.",
+        "form_mailto": "Open email",
+        "form_error_email": "Enter a valid email.",
+        "form_error_required": "Name, email and company are required.",
+        "columns_title": "Which columns we expect",
+        "columns_sub": "The forecast uses these fields. If your headers differ, you map them when you upload.",
+        "columns_sales_title": "**Sales history — required**",
+        "columns_inv_title": "**Inventory — required**",
+        "columns_inv_opt_title": "**Inventory — optional**",
+        "columns_extra": "Any other column (for example supplier or category) travels as a dimension and can be filtered. The templates include a couple as examples.",
+        "columns_units": "On-hand stock has to be in the same units as quantity sold.",
+        "columns_dates": "Accepted dates: YYYY-MM-DD, DD/MM/YYYY, MM/DD/YYYY, YYYY-MM, or automatic detection.",
+        "columns_blank": "A blank on-hand figure is not zero: that combination is marked No stock record, and stays off the stockout list. The last row of the inventory template shows this.",
+        "columns_download_sales": "Download sales template",
+        "columns_download_inv": "Download inventory template",
+        "colhelp_sku": "Product identifier.",
+        "colhelp_cd_ventas": "Center, store or warehouse where it sold.",
+        "colhelp_fecha": "Sale date. Day, week or month all work: everything is aggregated to a month before forecasting.",
+        "colhelp_cantidad": "Units sold in that period. Negatives are kept as returns.",
+        "colhelp_existencia": "Units on hand today.",
+        "colhelp_cd_inv": "If present, stock is matched to sales from that same center. If absent, the SKU's stock is split across its centers by sales history.",
+        "colhelp_pack": "Purchase multiple. If the column is missing, 1 is used.",
+        "colhelp_lead": "Replenishment days. If the column is missing, 30 is used. A made-up lead time changes the inventory status.",
     },
 }
 
@@ -616,20 +731,52 @@ def cargar_favicon():
     return im.crop((x0, y0, x0 + lado, y0 + lado)).resize((64, 64), Image.LANCZOS)
 
 
+def es_demo() -> bool:
+    """El visitante entró por Probar demo. La sesión cubre el rerun; el query param
+    sobrevive un F5 y un link compartido (/forecast?demo=1)."""
+    if st.session_state.get("modo_demo"):
+        return True
+    try:
+        return str(st.query_params.get("demo", "")) == "1"
+    except Exception:
+        return False
+
+
+def entrar_demo():
+    st.session_state["modo_demo"] = True
+    st.session_state["forecast_view"] = None
+    try:
+        st.query_params["demo"] = "1"
+    except Exception:
+        pass
+
+
+def salir_demo():
+    st.session_state.pop("modo_demo", None)
+    try:
+        if str(st.query_params.get("demo", "")) == "1":
+            del st.query_params["demo"]
+    except Exception:
+        pass
+
+
 @st.cache_data
-def load():
+def load(demo: bool = False):
     """(resultados, historico) o (None, None) si el pipeline nunca corrió.
 
+    demo=True lee demo/*.parquet (muestra sintética). El default sigue siendo el
+    parquet del cliente, que es lo que ve una sesión autenticada.
     No invalida por cambios en disco: después de re-correr pipeline.py hay que limpiar
     la cache (st.cache_data.clear(), que es lo que hace el modal de carga).
     Import lazy de polars para no penalizar la landing (que no lo necesita)."""
     import polars as pl
 
-    if not (BASE / "resultados.parquet").exists():
+    carpeta = DEMO_DIR if demo else BASE
+    res_path = carpeta / "resultados.parquet"
+    hist_path = carpeta / "historico.parquet"
+    if not res_path.exists() or not hist_path.exists():
         return None, None
-    res = pl.read_parquet(BASE / "resultados.parquet")
-    hist = pl.read_parquet(BASE / "historico.parquet")
-    return res, hist
+    return pl.read_parquet(res_path), pl.read_parquet(hist_path)
 
 
 def load_dim_config():

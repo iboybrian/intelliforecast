@@ -11,6 +11,7 @@ import base64
 import streamlit as st
 
 import auth
+import contact
 import core
 from core import ACCENT_CYAN, ACCENT_ORANGE, BG_DARK, BG_PANEL, H, MOBILE_BREAKPOINT
 
@@ -19,10 +20,6 @@ from core import ACCENT_CYAN, ACCENT_ORANGE, BG_DARK, BG_PANEL, H, MOBILE_BREAKP
 st.set_page_config(initial_sidebar_state="expanded")
 
 TXT = core.txt()
-
-# Pegar acá el embed URL del Google Form (pestaña "<>" del botón Enviar) una vez creado —
-# ver plan/prerequisito. Vacío = el diálogo de Contact Sales muestra un aviso en vez de romper.
-GOOGLE_FORM_URL = ""
 
 # bandas de secciones: azul propio (no el de la paleta del resto del sitio), blanco y gris
 SECT_BLUE = "#0F4C81"
@@ -35,8 +32,6 @@ def _img_b64(nombre: str) -> str:
     data = (core.BASE / "assets" / nombre).read_bytes()
     return base64.b64encode(data).decode()
 
-
-HERO_B64 = _img_b64("herosection.jpg")
 
 st.html(f"""
 <style>
@@ -125,18 +120,10 @@ st.html(f"""
     position: relative;
     z-index: 1;
 }}
-/* fade-in de toda la pagina al cargar. Solo opacity, nunca transform: un
-   `transform` animado deja un containing block permanente en Chrome incluso
-   terminando en "none" (getComputedStyle lo muestra como matrix identidad, no
-   como el string "none"), y eso rompe el `position: sticky` de cualquier
-   descendiente -- le costo el sticky de "Como funciona" a esta misma pagina. */
-.stMainBlockContainer {{
-    animation: page-fade-in 0.8s ease-out both;
-}}
-@keyframes page-fade-in {{
-    from {{ opacity: 0; }}
-    to {{ opacity: 1; }}
-}}
+/* Sin fade de toda la pagina. Empezaba en opacity 0 (fill-mode both) y, junto
+   con el JPEG de 2.5MB embebido en este mismo style, dejaba el main en blanco
+   varios segundos despues de que el sidebar ya estaba. Las secciones de abajo
+   siguen revelandose al scrollear, solo con opacity. */
 /* fade-in de cada seccion al entrar en pantalla al hacer scroll. CSS puro via
    scroll-driven animations (animation-timeline: view()) -- nada de JS ni
    IntersectionObserver: st.html sanea el HTML y un tag de script inyectado asi
@@ -184,8 +171,10 @@ st.html(f"""
     font-weight: 600;
     letter-spacing: 0.02em;
 }}
+/* Gradiente primero, sin el JPEG: el titulo se pinta enseguida. La foto
+   llega en un style aparte, despues de que el hero ya esta en el DOM. */
 [class*="st-key-hero_section"] {{
-    background-image: url("data:image/jpeg;base64,{HERO_B64}");
+    background: radial-gradient(circle at 70% 18%, #1E3A5C 0%, #0E1B2E 58%);
     background-size: cover;
     background-position: center;
     min-height: 560px;
@@ -243,9 +232,16 @@ st.html(f"""
 }}
 /* botones del hero uno abajo del otro, mismo ancho */
 [class*="st-key-cta_hero_start"] button,
-[class*="st-key-cta2_hero_contact"] button {{
+[class*="st-key-cta2_hero_contact"] button,
+[class*="st-key-hero_client"] button {{
     width: 260px;
     justify-content: center;
+}}
+[class*="st-key-hero_client"] button {{
+    background: transparent !important;
+    border: none !important;
+    text-decoration: underline;
+    font-weight: 600;
 }}
 /* ---- Nuestras soluciones: titulo centrado, icono arriba, boton ancho ---- */
 .svc-titulo {{
@@ -510,21 +506,24 @@ def dialog_forecast():
         auth.ir_a_destino()
 
 
-@st.dialog(TXT.get("landing_contact_title", "Hablemos"))
+@st.dialog(TXT.get("landing_contact_title", "Sé tester beta"), width="large")
 def dialog_contact_sales():
-    if GOOGLE_FORM_URL:
-        st.components.v1.iframe(GOOGLE_FORM_URL, height=640, scrolling=True)
-    else:
-        st.caption(TXT.get("landing_contact_pending", ""))
+    contact.formulario_acceso()
+
+
+def _ir_demo():
+    core.entrar_demo()
+    st.switch_page("app_pages/forecast.py")
 
 
 def cta(key):
-    if st.button(TXT.get("landing_cta", "Ver forecast ahora"), key=key, icon=":material/arrow_forward:"):
-        dialog_forecast()
+    if st.button(TXT.get("landing_cta", "Probar demo"), key=key, icon=":material/arrow_forward:"):
+        _ir_demo()
 
 
 def cta_contact(key):
-    if st.button(TXT.get("landing_hero_cta_contact", "Contact sales"), key=key):
+    if st.button(TXT.get("demo_beta_cta", "Sé tester beta"), key=key):
+        st.session_state.pop("contact_result_beta", None)
         dialog_contact_sales()
 
 
@@ -535,14 +534,26 @@ with st.container(key="hero_section"):
     sub = TXT.get("landing_hero_sub", "")
     st.markdown(sub.format(h=H) if "{h}" in sub else sub)
     # sin columnas: uno abajo del otro
-    if st.button(TXT.get("landing_hero_cta_start", "Empezar a pronosticar"),
+    if st.button(TXT.get("demo_cta", "Probar demo"),
                  key="cta_hero_start", icon=":material/arrow_forward:"):
-        dialog_forecast()
+        _ir_demo()
     cta_contact("cta2_hero_contact")
     st.markdown(
         f"<span class='hero-nota'>{TXT.get('landing_cta_sub', '')}</span>",
         unsafe_allow_html=True,
     )
+    if st.button(TXT.get("demo_client_cta", "Ya tengo acceso"), key="hero_client"):
+        dialog_forecast()
+
+# La foto va despues del titulo: el primer paint no espera el base64.
+_hero_nombre = "herosection_bg.jpg"
+if not (core.BASE / "assets" / _hero_nombre).exists():
+    _hero_nombre = "herosection.jpg"
+st.html(
+    "<style>[class*='st-key-hero_section']{"
+    "background-image:url(\"data:image/jpeg;base64," + _img_b64(_hero_nombre) + "\");"
+    "background-size:cover;background-position:center;}</style>"
+)
 
 # ------------------------------------------------------------------ Por qué IntelliForecast (banda azul)
 with st.container(key="sect_blue_why"):
@@ -591,6 +602,58 @@ with st.container(key="sect_white_how"):
         with der.container(key=f"how_step_{i}"):
             st.markdown(f"### {titulo}")
             st.markdown(cuerpo)
+
+# ------------------------------------------------------------------ Columnas esperadas (banda azul)
+def _campo(nombre, ayuda):
+    st.markdown(f"- `{nombre}` — {ayuda}")
+
+
+_AYUDA_VENTAS = {
+    "sku": "colhelp_sku",
+    "centro_distribucion": "colhelp_cd_ventas",
+    "fecha": "colhelp_fecha",
+    "cantidad": "colhelp_cantidad",
+}
+_AYUDA_INV = {
+    "sku": "colhelp_sku",
+    "existencia": "colhelp_existencia",
+    "centro_distribucion": "colhelp_cd_inv",
+    "pack": "colhelp_pack",
+    "lead_time_dias": "colhelp_lead",
+}
+
+with st.container(key="sect_blue_columns"):
+    st.subheader(TXT["columns_title"])
+    st.caption(TXT["columns_sub"])
+    col_ventas, col_inv = st.columns(2)
+    with col_ventas:
+        st.markdown(TXT["columns_sales_title"])
+        for nombre in core.COLUMNAS_VENTAS_REQ:
+            _campo(nombre, TXT[_AYUDA_VENTAS[nombre]])
+        st.caption(TXT["columns_extra"])
+    with col_inv:
+        st.markdown(TXT["columns_inv_title"])
+        for nombre in core.COLUMNAS_INVENTARIO_REQ:
+            _campo(nombre, TXT[_AYUDA_INV[nombre]])
+        st.markdown(TXT["columns_inv_opt_title"])
+        for nombre in core.COLUMNAS_INVENTARIO_OPC:
+            _campo(nombre, TXT[_AYUDA_INV[nombre]])
+    st.caption(TXT["columns_units"])
+    st.caption(TXT["columns_dates"])
+    st.caption(TXT["columns_blank"])
+    baj_v, baj_i = st.columns(2)
+    ruta_v = core.DEMO_DIR / "plantilla_ventas.csv"
+    ruta_i = core.DEMO_DIR / "plantilla_inventario.csv"
+    if ruta_v.exists():
+        baj_v.download_button(
+            TXT["columns_download_sales"], ruta_v.read_bytes(),
+            file_name="plantilla_ventas.csv", mime="text/csv", key="tpl_ventas",
+        )
+    if ruta_i.exists():
+        baj_i.download_button(
+            TXT["columns_download_inv"], ruta_i.read_bytes(),
+            file_name="plantilla_inventario.csv", mime="text/csv", key="tpl_inv",
+        )
 
 # ------------------------------------------------------------------ Qué obtienes (banda gris)
 with st.container(key="sect_gray_what"):
@@ -682,7 +745,7 @@ with st.container(key="sect_white_services"):
     servicio(s1, "svc_pro", ICONO_BARRAS,
              TXT.get("landing_service_pro_title", ""),
              TXT.get("landing_service_pro_body", ""),
-             TXT.get("landing_service_pro_cta", "Empezar"), dialog_forecast)
+             TXT.get("landing_service_pro_cta", "Empezar"), _ir_demo)
     servicio(s2, "svc_inhouse", ICONO_CEREBRO,
              TXT.get("landing_service_inhouse_title", ""),
              TXT.get("landing_service_inhouse_body", ""),
@@ -695,4 +758,5 @@ with st.container(key="sect_gray_trust"):
         st.caption(TXT.get("landing_trust_body", ""))
 
     cta("cta_bottom")
+    cta_contact("cta_bottom_beta")
     st.caption(TXT.get("app_caption", ""))

@@ -1,0 +1,4 @@
+sku,centro_distribucion,existencia,pack,lead_time_dias
+DEMO-BOLT-AURORA,DC-NORTH,30,10,21
+DEMO-WIDGET-BOREAL,DC-SOUTH,800,6,14
+DEMO-KIT-JUNIPER,DC-WEST,,1,30
