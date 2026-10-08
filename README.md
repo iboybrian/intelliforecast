@@ -27,21 +27,28 @@ python demo/generar_muestra.py --check
 
 ## Secrets on Streamlit Community Cloud
 
-In the app's Secrets panel (or `.streamlit/secrets.toml` locally). Nothing below is hardcoded in the app.
+In the app's Secrets panel (or `.streamlit/secrets.toml` locally). The Zoho password stays there, not in the repo.
 
 ### Contact form and in-app feedback
 
-Both the beta-tester form and the Forecast feedback button POST the same JSON payload. If `webhook_url` is missing or the POST fails, the visitor sees `email` and a mailto link with their answers filled in. If neither is set, the form says so and does not invent an address.
+Every beta request and every feedback note is emailed to **brianiboy@intellivet.tech** (To) and **brianjosue1900@gmail.com** (Cc). That send uses Zoho SMTP. The password is not in the repo. In the Streamlit Cloud app: Settings → Secrets:
 
 ```toml
 [contact]
-email = "team@example.com"
-# Optional. Any HTTPS endpoint that accepts a JSON POST.
-# http is accepted only for 127.0.0.1 / localhost, so you can try it locally.
-webhook_url = "https://script.google.com/macros/s/XXXX/exec"
+smtp_password = "zoho-app-password"
 ```
 
-`email` alone is enough for the fallback. Set `webhook_url` when you want submissions stored automatically.
+Zoho Mail → Settings → Security → App Passwords → generate one named IntelliForecast. Reboot the app after saving the secret. Until that password is there, Send opens a mail draft addressed to both inboxes with the answers filled in.
+
+Optional, only if the Zoho account is not on smtp.zoho.com:
+
+```toml
+smtp_host = "smtp.zoho.com"
+smtp_port = 587
+smtp_user = "brianiboy@intellivet.tech"
+```
+
+`webhook_url` is an extra optional JSON POST. It is not required for the emails.
 
 Payload fields:
 

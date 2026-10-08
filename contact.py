@@ -1,31 +1,37 @@
 """Formulario de acceso beta y de feedback.
 
-La entrega no tiene credenciales en el código. En `.streamlit/secrets.toml`
-(en Streamlit Cloud, la UI de Secrets):
+Cada envío va a las dos casillas de abajo. El envío automático usa el SMTP de
+Zoho: la contraseña NO va en el código, va en secrets (Streamlit Cloud → Settings
+→ Secrets):
 
     [contact]
-    email = "equipo@ejemplo.com"          # fallback visible si no hay webhook
-    webhook_url = "https://..."           # opcional. POST JSON. HTTPS
-                                          # (http solo en localhost, para probar)
+    smtp_password = "..."          # contraseña de aplicación de Zoho
+    # smtp_host = "smtp.zoho.com"  # default
+    # smtp_port = 587
+    # smtp_user = "brianiboy@intellivet.tech"
 
-Sin webhook, el visitante ve el email y un mailto con lo que escribió.
-Sin email ni webhook, un aviso pide configurar secrets — no se inventa una dirección.
-Cada envío válido se agrega además a contact_submissions.jsonl (gitignoreado):
-sirve para probar en local; en Community Cloud ese archivo no le llega a nadie.
+Sin esa contraseña el visitante igual puede escribir: el botón abre un mail a
+las dos direcciones con lo que completó. Un webhook_url en secrets sigue siendo
+un destino extra, opcional.
 """
 
 import json
 import re
+import smtplib
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from email.message import EmailMessage
 
 import streamlit as st
 
 import core
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# Destino fijo del formulario. Zoho recibe, Gmail va en copia.
+DESTINATARIOS = ("brianiboy@intellivet.tech", "brianjosue1900@gmail.com")
 
 # Misma cantidad y el mismo orden en los dos idiomas: el índice es estable.
 ROLES = {
@@ -101,21 +107,58 @@ def _append_local(payload: dict):
         pass
 
 
+def _smtp():
+    bloque = _bloque()
+    return {
+        "host": str(bloque.get("smtp_host") or "smtp.zoho.com"),
+        "port": int(bloque.get("smtp_port") or 587),
+        "user": str(bloque.get("smtp_user") or DESTINATARIOS[0]),
+        "password": str(bloque.get("smtp_password") or ""),
+    }
+
+
+def _enviar_smtp(payload: dict):
+    """Manda el mismo texto a Zoho y, en copia, a Gmail. Reply-To es quien escribió."""
+    cfg = _smtp()
+    if not cfg["password"]:
+        return False
+    asunto = ("IntelliForecast — pedido de acceso" if payload.get("kind") == "beta_access"
+              else "IntelliForecast — comentarios")
+    msg = EmailMessage()
+    msg["Subject"] = asunto
+    msg["From"] = cfg["user"]
+    msg["To"] = DESTINATARIOS[0]
+    msg["Cc"] = DESTINATARIOS[1]
+    if payload.get("email"):
+        msg["Reply-To"] = payload["email"]
+    msg.set_content(_texto(payload))
+    with smtplib.SMTP(cfg["host"], cfg["port"], timeout=20) as smtp:
+        smtp.ehlo()
+        smtp.starttls()
+        smtp.ehlo()
+        smtp.login(cfg["user"], cfg["password"])
+        smtp.send_message(msg)
+    return True
+
+
 def entregar(payload: dict) -> dict:
-    """{'status': 'delivered'|'fallback'|'unconfigured', 'email': str}."""
+    """{'status': 'delivered'|'fallback', 'email': str, 'reason': optional}."""
     _append_local(payload)
+    email = ", ".join(DESTINATARIOS)
+    if _smtp()["password"]:
+        try:
+            if _enviar_smtp(payload):
+                return {"status": "delivered", "email": email}
+        except Exception:
+            return {"status": "fallback", "email": email, "reason": "failed"}
     url = webhook_url()
-    email = email_contacto()
     if url and _url_permitida(url):
         try:
             if _post(url, payload):
                 return {"status": "delivered", "email": email}
         except Exception:
             pass
-        return {"status": "fallback" if email else "unconfigured", "email": email, "reason": "failed"}
-    if email:
-        return {"status": "fallback", "email": email, "reason": "missing"}
-    return {"status": "unconfigured", "email": ""}
+    return {"status": "fallback", "email": email, "reason": "missing"}
 
 
 def _texto(payload: dict) -> str:
@@ -124,7 +167,9 @@ def _texto(payload: dict) -> str:
 
 def _mailto(email: str, payload: dict) -> str:
     asunto = "IntelliForecast beta" if payload.get("kind") == "beta_access" else "IntelliForecast feedback"
-    return "mailto:" + email + "?" + urllib.parse.urlencode({"subject": asunto, "body": _texto(payload)})
+    # las dos casillas van en Para. El espacio después de la coma lo rompe algunos clientes.
+    destino = ",".join(parte.strip() for parte in email.split(","))
+    return "mailto:" + destino + "?" + urllib.parse.urlencode({"subject": asunto, "body": _texto(payload)})
 
 
 def mostrar_resultado(resultado: dict, payload: dict):
@@ -160,6 +205,7 @@ def formulario_acceso():
     """Pedido de acceso beta / contacto. Lo abren la landing y el aviso de carga del demo."""
     TXT = core.txt()
     st.caption(TXT["form_intro"])
+    st.caption(TXT["form_goes_to"])
     with st.form("form_acceso"):
         c1, c2 = st.columns(2)
         nombre = c1.text_input(TXT["form_nombre"])
@@ -199,6 +245,7 @@ def formulario_acceso():
 def formulario_feedback():
     TXT = core.txt()
     st.caption(TXT["feedback_hint"])
+    st.caption(TXT["form_goes_to"])
     with st.form("form_feedback"):
         funciono = st.text_area(TXT["feedback_worked"])
         no_funciono = st.text_area(TXT["feedback_didnt"])
