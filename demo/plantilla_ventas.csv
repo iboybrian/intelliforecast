@@ -1,0 +1,5 @@
+sku,centro_distribucion,fecha,cantidad,proveedor,categoria
+DEMO-BOLT-AURORA,DC-NORTH,2024-01-01,102,Acme Sample Supply,Fasteners
+DEMO-BOLT-AURORA,DC-NORTH,2024-02-01,98,Acme Sample Supply,Fasteners
+DEMO-WIDGET-BOREAL,DC-SOUTH,2024-01-01,40,Northwind Demo Parts,Widgets
+DEMO-LATCH-EMBER,DC-WEST,2024-03-01,0,Northwind Demo Parts,Fasteners

@@ -98,6 +98,9 @@ def logout():
 def ir_a_destino():
     """Ruta interna -> switch_page. Link externo -> boton (una redireccion automatica
     necesitaria JS, que Streamlit sanea)."""
+    # un login real no se queda mirando la muestra: el query ?demo=1 dejaría
+    # el dashboard leyendo los parquets sintéticos.
+    core.salir_demo()
     url = destino()
     if url.startswith("http"):
         TXT = core.txt()
@@ -148,10 +151,16 @@ def login_form(key: str = "login") -> bool:
 def pantalla_login():
     """Version pagina completa del formulario (la usa el guard de app.py cuando alguien
     entra a /forecast por URL directa, sin pasar por el dialogo de la landing)."""
+    TXT = core.txt()
     _, centro, _ = st.columns([1, 2, 1])
     with centro:
         if login_form("login_pagina"):
             ir_a_destino()
+        st.divider()
+        st.caption(TXT["demo_login_hint"])
+        if st.button(TXT["demo_cta"], key="login_probar_demo", use_container_width=True):
+            core.entrar_demo()
+            st.rerun()
 
 
 def sidebar_sesion():
@@ -161,6 +170,11 @@ def sidebar_sesion():
         if st.sidebar.button(TXT["auth_salir"], key="btn_logout"):
             logout()
             st.rerun()
+    if core.es_demo():
+        st.sidebar.caption(TXT["demo_sidebar"])
+        if st.sidebar.button(TXT["demo_salir"], key="btn_salir_demo"):
+            core.salir_demo()
+            st.switch_page("app_pages/inicio.py")
 
 
 # --------------------------------------------------------------------- CLI

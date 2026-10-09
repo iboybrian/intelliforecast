@@ -274,15 +274,17 @@ pagina = st.navigation([pag_inicio, pag_forecast])
 st.sidebar.title(TXT["app_title"])
 st.sidebar.caption(TXT["app_caption"])
 
-# Trigger desde forecast.py hub (opción 4) -> abrir modal directo
-if st.session_state.pop("trigger_upload_dialog", False):
+# Trigger desde forecast.py hub (opción 4) -> abrir modal directo.
+# En el demo público no: escribir_carga pisa los CSV del cliente en el mismo disco.
+if st.session_state.pop("trigger_upload_dialog", False) and not core.es_demo():
     modal_carga_datos()
 
 auth.sidebar_sesion()
 
 # Unico punto de control: el login del diálogo de la landing es comodidad, esto es la puerta.
 # Cubre tambien la URL directa (/forecast) y el link del sidebar, que no pasan por el diálogo.
-if pagina.url_path == pag_forecast.url_path and not auth.ok():
+# ?demo=1 (o la sesión que deja "Probar demo") entra sin credenciales, a los parquets sintéticos.
+if pagina.url_path == pag_forecast.url_path and not auth.ok() and not core.es_demo():
     auth.pantalla_login()
     st.stop()
 
