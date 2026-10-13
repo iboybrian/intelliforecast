@@ -49,17 +49,7 @@ UMBRAL_SERIES = 2000
 SEGUNDOS_POR_SERIE = 0.3
 
 core.inject_css()
-
-if "lang" not in st.session_state:
-    st.session_state["lang"] = "en"
-
-st.sidebar.radio(
-    "🌐 " + core.STRINGS[st.session_state["lang"]]["lang_label"],
-    options=["es", "en"],
-    format_func=lambda x: "Español" if x == "es" else "English",
-    horizontal=True,
-    key="lang",
-)
+core.selector_idioma()
 TXT = core.txt()
 
 

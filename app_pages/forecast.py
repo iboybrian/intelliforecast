@@ -115,7 +115,7 @@ barra_tester()
 # Hub de entrada: nada de datos por default. Se llega aca al entrar a la pagina y al volver
 # desde cualquier vista.
 if view is None:
-    st.title(TXT.get("forecast_menu_title", "¿Qué querés hacer?"))
+    st.title(TXT.get("forecast_menu_title", "¿Qué quieres hacer?"))
     st.caption(TXT.get("forecast_menu_sub", ""))
     st.divider()
 

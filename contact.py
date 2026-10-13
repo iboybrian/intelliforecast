@@ -191,13 +191,13 @@ def _base(kind: str) -> dict:
     return {
         "kind": kind,
         "submitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "lang": st.session_state.get("lang", "en"),
+        "lang": core.lang_activo(),
         "modo": "demo" if core.es_demo() else ("cliente" if st.session_state.get("auth_user") else "visita"),
     }
 
 
 def _opciones(tabla: dict) -> list[str]:
-    lang = st.session_state.get("lang", "en")
+    lang = core.lang_activo()
     return tabla.get(lang) or tabla["en"]
 
 

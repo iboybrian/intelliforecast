@@ -28,7 +28,7 @@ DEMO_DIR = BASE / "demo"
 # en los dos idiomas a proposito: el visitante llega en telefono sin haber tocado el selector,
 # y ademas inject_css() corre antes de que app.py fije st.session_state["lang"].
 MOBILE_BREAKPOINT = 768
-MOBILE_MSG = ("Este dashboard necesita una computadora.\\A Abrilo desde una laptop o desktop."
+MOBILE_MSG = ("Este dashboard necesita una computadora.\\A Ábrelo desde una laptop o desktop."
               "\\A\\A This dashboard needs a computer.\\A Please open it on a laptop or desktop.")
 
 # ---------------------------------------------------------------- Paleta (IntelliVet)
@@ -90,16 +90,16 @@ STRINGS = {
         "upload_error": "Error al procesar los archivos:",
         "log_completo": "Ver log completo",
         "avisos_title": "⚠️ {n} aviso(s) de la última carga",
-        "map_help": "Elegí de qué columna de tu CSV sale cada campo:",
+        "map_help": "Elige de qué columna de tu CSV sale cada campo:",
         "upload_missing": "Faltan columnas requeridas:",
         "map_placeholder": "— elegir —",
         "map_no_disponible": "— no está en el CSV —",
         "map_ventas_title": "**Ventas — campos obligatorios**",
         "map_inventario_title": "**Inventario — campos obligatorios**",
         "map_inventario_opc": "**Inventario — opcionales**",
-        "inv_cd_help": "Si tu inventario indica en qué centro está cada existencia, asignalo acá: "
+        "inv_cd_help": "Si tu inventario indica en qué centro está cada existencia, asígnalo acá: "
                        "el stock se matchea directo contra las ventas de ese mismo centro. "
-                       "Si lo dejás sin asignar, la existencia del SKU se reparte entre sus "
+                       "Si lo dejas sin asignar, la existencia del SKU se reparte entre sus "
                        "centros proporcional al histórico de ventas.",
         "map_fecha_formato": "Formato de fecha",
         "map_dup_error": "Una misma columna está asignada a dos campos distintos.",
@@ -122,8 +122,8 @@ STRINGS = {
         "tab_overview": "Vista general",
         "tab_risk": "SKUs en riesgo de quiebre",
         "tab_overstock": "SKUs en sobre-stock",
-        "forecast_menu_title": "¿Qué querés hacer?",
-        "forecast_menu_sub": "Elegí una opción — podés volver a este menú en cualquier momento.",
+        "forecast_menu_title": "¿Qué quieres hacer?",
+        "forecast_menu_sub": "Elige una opción — puedes volver a este menú en cualquier momento.",
         "forecast_opt_dashboard_title": "Ver Dashboard con información",
         "forecast_opt_dashboard_body": "Vista general, KPIs, clasificación de demanda y drill-down por SKU.",
         "forecast_opt_dashboard_btn": "Ver Dashboard",
@@ -134,11 +134,11 @@ STRINGS = {
         "forecast_opt_over_body": "Exceso sobre 120 días de cobertura — qué frenar y qué mover entre centros.",
         "forecast_opt_over_btn": "Ver sobrestock",
         "forecast_opt_upload_title": "Quiero subir nuevo forecast",
-        "forecast_opt_upload_body": "Cargá nuevos CSVs de ventas e inventario y recalculá el forecast.",
+        "forecast_opt_upload_body": "Carga nuevos CSVs de ventas e inventario y recalcula el forecast.",
         "forecast_opt_upload_btn": "Subir datos",
         "forecast_back": "← Volver al menú",
         "forecast_upload_title": "Subir nuevo forecast",
-        "forecast_upload_body": "Usá el formulario de carga para subir tus archivos. Podés abrirlo desde acá o desde el botón de la barra lateral.",
+        "forecast_upload_body": "Usa el formulario de carga para subir tus archivos. Puedes abrirlo desde acá o desde el botón de la barra lateral.",
         "forecast_upload_open": "Abrir formulario de carga",
         "title_overview": "Vista general de inventario",
         "scope_all": "todos los centros",
@@ -213,26 +213,26 @@ STRINGS = {
         "overstock_asof_note": "DOH estimado con la existencia registrada hoy ({hoy}).",
         "col_exceso": "Exceso",
         # ---- Landing (app_pages/inicio.py) — comercial
-        "landing_hero_title": "Mirá fácil cuánto vas a vender, cuánto stock te falta y cuánto te sobra",
-        "landing_hero_sub": "Subís tu histórico de ventas y tu inventario. El algoritmo pronostica la demanda "
+        "landing_hero_title": "Mira fácil cuánto vas a vender, cuánto stock te falta y cuánto te sobra",
+        "landing_hero_sub": "Subes tu histórico de ventas y tu inventario. El algoritmo pronostica la demanda "
                             "de los próximos meses para cada combinación SKU-centro, elige el modelo "
                             "que mejor le sirve a cada serie y te dice cuándo un producto está en sobre-stock, "
                             "cuándo está cerca de un quiebre y cuánto reordenar.",
         "landing_hero_badge": "Forecast mensual · KPIs de inventario · Reposición sugerida",
         "landing_cta": "Probar demo",
-        "landing_cta_sub": "Datos de muestra, sin cuenta. Con el acceso beta cargás tus propios archivos.",
+        "landing_cta_sub": "Datos de muestra, sin cuenta. Con el acceso beta cargas tus propios archivos.",
         "landing_dialog_title": "Un momento antes de entrar",
         "landing_dialog_body": "El dashboard puede tardar unos segundos en abrir: al entrar se cargan "
                                "los modelos y los resultados de todas las combinaciones SKU-centro.",
-        "landing_dialog_tip": "Es solo la primera vez — después navegás entre vistas sin espera.",
+        "landing_dialog_tip": "Es solo la primera vez — después navegas entre vistas sin espera.",
         "landing_dialog_confirm": "Entendido, ver forecast",
         "auth_titulo": "Acceso de clientes",
         "auth_usuario": "Usuario",
         "auth_password": "Contraseña",
         "auth_entrar": "Entrar",
         "auth_error": "Usuario o contraseña incorrectos.",
-        "auth_bloqueado": "Demasiados intentos. Probá de nuevo en {s} s.",
-        "auth_sin_perfiles": "No hay perfiles cargados todavía. Creá uno y pegalo en los secrets:",
+        "auth_bloqueado": "Demasiados intentos. Prueba de nuevo en {s} s.",
+        "auth_sin_perfiles": "No hay perfiles cargados todavía. Crea uno y pégalo en los secrets:",
         "auth_bienvenida": "Listo, {u}.",
         "auth_continuar": "Continuar a tu dashboard",
         "auth_sesion": "Sesión: {u}",
@@ -240,12 +240,12 @@ STRINGS = {
         "landing_pain_title": "¿Te suena familiar?",
         "landing_pain_sub": "Si alguna de estas te describe, IntelliForecast te ahorra horas por semana:",
         "landing_pain_q1_title": "¿Te topas con quiebres de stock?",
-        "landing_pain_q1_body": "Te enterás tarde, perdés ventas y clientes. La app alerta con semanas de anticipación "
+        "landing_pain_q1_body": "Te enteras tarde, pierdes ventas y clientes. La app alerta con semanas de anticipación "
                                 "qué SKU-centro se queda sin cobertura y cuándo reordenar.",
-        "landing_pain_q2_title": "¿Te enredás con múltiples productos a forecastear?",
+        "landing_pain_q2_title": "¿Te enredas con múltiples productos a forecastear?",
         "landing_pain_q2_body": "Cientos de combinaciones SKU-centro, cada una con su estacionalidad. "
                                 "Cada serie compite entre 7 modelos y gana el que menos se equivoca — sin Excel manual.",
-        "landing_pain_q3_title": "¿Querés liberar tiempo a tu equipo?",
+        "landing_pain_q3_title": "¿Quieres liberar tiempo a tu equipo?",
         "landing_pain_q3_body": "Dejan de armar planillas y pasan a decidir: qué comprar, qué frenar y qué mover entre centros. "
                                 "El forecast y los KPIs salen listos para compartir.",
         "landing_benefits_title": "Qué obtienes",
@@ -261,14 +261,14 @@ STRINGS = {
         "landing_benefit4_title": "Dashboard + Excel listo para comprar",
         "landing_benefit4_body": "Vista general, riesgo y sobre-stock en 3 pestañas, con filtros y descarga en Excel (KPIs + histórico 24m).",
         "landing_how_title": "Cómo funciona",
-        "landing_how_lead": "Subí tus datos, ¡nosotros hacemos el resto!",
-        "landing_how_sub": "4 pasos, sin código. Tus headers no tienen que coincidir: los mapeás en la carga.",
-        "landing_step1_title": "1 · Subís tus CSVs",
-        "landing_step1_body": "Ventas históricas e inventario, con cualquier nombre de columna. Mapeás cada campo y eliges formatos en un modal. "
-                              "No hace falta tocar el archivo antes: el mapeo se guarda y se reusa la próxima vez que subís datos.",
+        "landing_how_lead": "Sube tus datos, ¡nosotros hacemos el resto!",
+        "landing_how_sub": "4 pasos, sin código. Tus headers no tienen que coincidir: los mapeas en la carga.",
+        "landing_step1_title": "1 · Subes tus CSVs",
+        "landing_step1_body": "Ventas históricas e inventario, con cualquier nombre de columna. Mapeas cada campo y eliges formatos en un modal. "
+                              "No hace falta tocar el archivo antes: el mapeo se guarda y se reusa la próxima vez que subes datos.",
         "landing_step2_title": "2 · Clasificamos la demanda",
         "landing_step2_body": "Cada serie cae en Suave / Errático / Intermitente / Irregular (SBC) según frecuencia y variabilidad. "
-                              "Esa clasificación decide qué familia de modelos compite después: no es lo mismo pronosticar algo que vendés "
+                              "Esa clasificación decide qué familia de modelos compite después: no es lo mismo pronosticar algo que vendes "
                               "todos los días que un repuesto que se pide una vez cada dos meses.",
         "landing_step3_title": "3 · Compiten los modelos",
         "landing_step3_body": "Regulares: AutoETS, AutoARIMA, Theta, SeasonalNaive. Intermitentes: Croston, TSB, ADIDA. Gana el de menor error. "
@@ -276,7 +276,7 @@ STRINGS = {
                               "efectivamente se vendió — no una promesa teórica.",
         "landing_step4_title": "4 · Traducimos a inventario",
         "landing_step4_body": "Cruzamos forecast con existencia: DOH/WOS/MOH, estado y reposición sugerida (1.5× lead time, múltiplo de pack). "
-                              "El resultado es una cantidad concreta a pedir, no solo una alerta: sabés cuánto comprar y de qué SKU, listo para "
+                              "El resultado es una cantidad concreta a pedir, no solo una alerta: sabes cuánto comprar y de qué SKU, listo para "
                               "mandarle al proveedor.",
         "landing_dashboard_title": "Así se ve el dashboard",
         "landing_dashboard_sub": "Tres vistas que tu equipo puede usar el mismo día. Las capturas ilustran el producto; el demo interactivo usa datos sintéticos.",
@@ -286,8 +286,8 @@ STRINGS = {
         "landing_hero_cta_start": "Empezar a pronosticar",
         "landing_hero_cta_contact": "Hablar con ventas",
         "landing_why_title": "Por qué IntelliForecast",
-        "landing_why_r1_title": "Anticipás el quiebre antes de que pase",
-        "landing_why_r1_body": "La app avisa con semanas de anticipación qué SKU-centro se queda sin cobertura y cuándo reordenar — no te enterás cuando ya perdiste la venta.",
+        "landing_why_r1_title": "Anticipas el quiebre antes de que pase",
+        "landing_why_r1_body": "La app avisa con semanas de anticipación qué SKU-centro se queda sin cobertura y cuándo reordenar — no te enteras cuando ya perdiste la venta.",
         "landing_why_r2_title": "Un modelo por serie, no un promedio general",
         "landing_why_r2_body": "Cientos de combinaciones SKU-centro, cada una compite entre 7 modelos de forecast y gana el que menos se equivoca en backtesting.",
         "landing_why_r3_title": "Tu equipo deja el Excel y pasa a decidir",
@@ -295,17 +295,17 @@ STRINGS = {
         "landing_what_side_title": "Pensado para el equipo, no solo para el dato",
         "landing_what_side_b1": "Compradores y planners ven lo mismo, sin planillas paralelas.",
         "landing_what_side_b2": "Cada alerta trae fecha, cantidad y motivo — lista para actuar.",
-        "landing_what_side_b3": "Exportás a Excel en un clic para la reunión de compras.",
+        "landing_what_side_b3": "Exportas a Excel en un clic para la reunión de compras.",
         "landing_services_title": "Nuestras soluciones",
-        "landing_services_sub": "Dos formas de tener el forecast corriendo — vos elegís el nivel de involucramiento.",
+        "landing_services_sub": "Dos formas de tener el forecast corriendo — tú eliges el nivel de involucramiento.",
         "landing_service_pro_title": "Acceso a IntelliForecast Pro",
-        "landing_service_pro_body": "Subís tus CSVs y corrés el dashboard vos mismo, self-service, con soporte para la carga inicial.",
+        "landing_service_pro_body": "Subes tus CSVs y corres el dashboard tú mismo, self-service, con soporte para la carga inicial.",
         "landing_service_pro_cta": "Empezar",
         "landing_service_inhouse_title": "Demand Planning in-house",
         "landing_service_inhouse_body": "Nuestro equipo implementa y opera el forecasting dentro de tu empresa: integración con tus sistemas y acompañamiento continuo.",
         "landing_service_inhouse_cta": "Hablar con ventas",
         "landing_contact_title": "Sé tester beta",
-        "landing_contact_pending": "Formulario en configuración — mientras tanto, escribinos.",
+        "landing_contact_pending": "Formulario en configuración — mientras tanto, escríbenos.",
         # legacy (compat, ya no usados en la nueva landing pero los dejamos por si otra rama los referencia)
         "landing_metric_series": "Series SKU-centro",
         "landing_metric_skus": "SKUs",
@@ -329,23 +329,23 @@ STRINGS = {
         "demo_cta": "Probar demo",
         "demo_beta_cta": "Sé tester beta",
         "demo_client_cta": "Ya tengo acceso",
-        "demo_login_hint": "¿Sin usuario? Podés recorrer el forecast completo con datos de muestra.",
+        "demo_login_hint": "¿Sin usuario? Puedes recorrer el forecast completo con datos de muestra.",
         "demo_sidebar": "Viendo el demo con datos sintéticos",
         "demo_salir": "Salir del demo",
         "demo_banner_title": "Demo con datos sintéticos",
         "demo_banner": "Los SKU, centros y proveedores de esta vista son ficticios. No hay datos de una empresa real.",
         "demo_upload_title": "La carga es parte del acceso de cliente",
-        "demo_upload_body": "En el demo no se pueden subir archivos: eso reemplazaría los datos de muestra. Pedí acceso beta para probar con los tuyos.",
+        "demo_upload_body": "En el demo no se pueden subir archivos: eso reemplazaría los datos de muestra. Pide acceso beta para probar con los tuyos.",
         "error_no_demo": "No se encontró el demo de muestra. Falta demo/resultados.parquet.",
         "feedback_btn": "Enviar comentarios",
         "feedback_title": "¿Qué tal te fue?",
-        "feedback_hint": "Contanos qué funcionó y qué no. Llega al mismo lugar que el pedido de acceso.",
+        "feedback_hint": "Cuéntanos qué funcionó y qué no. Llega al mismo lugar que el pedido de acceso.",
         "feedback_worked": "Qué funcionó",
         "feedback_didnt": "Qué no funcionó",
-        "feedback_email": "Email (opcional, si querés que te respondamos)",
+        "feedback_email": "Email (opcional, si quieres que te respondamos)",
         "feedback_send": "Enviar",
-        "feedback_need_one": "Contanos al menos una cosa que funcionó o que no.",
-        "form_intro": "Contanos de tu operación y te escribimos para el acceso de tester, o para conversar con el equipo.",
+        "feedback_need_one": "Cuéntanos al menos una cosa que funcionó o que no.",
+        "form_intro": "Cuéntanos de tu operación y te escribimos para el acceso de tester, o para conversar con el equipo.",
         "form_nombre": "Nombre",
         "form_email": "Email",
         "form_empresa": "Empresa",
@@ -361,10 +361,10 @@ STRINGS = {
         "form_fallback_fail": "El envío falló. El botón abre un mail a brianiboy@intellivet.tech y brianjosue1900@gmail.com con lo que escribiste.",
         "form_unconfigured": "El formulario no tiene destino ni email de contacto. Quien administra la app tiene que configurar [contact] en los secrets.",
         "form_mailto": "Abrir email",
-        "form_error_email": "Ingresá un email válido.",
-        "form_error_required": "Completá nombre, email y empresa.",
+        "form_error_email": "Ingresa un email válido.",
+        "form_error_required": "Completa nombre, email y empresa.",
         "columns_title": "Qué columnas esperamos",
-        "columns_sub": "El forecast usa estos campos. Si tus headers se llaman distinto, los mapeás al subir el archivo.",
+        "columns_sub": "El forecast usa estos campos. Si tus headers se llaman distinto, los mapeas al subir el archivo.",
         "columns_sales_title": "**Ventas históricas — obligatorias**",
         "columns_inv_title": "**Inventario — obligatorias**",
         "columns_inv_opt_title": "**Inventario — opcionales**",
@@ -703,8 +703,8 @@ STRINGS = {
 
 
 def txt():
-    """Diccionario de strings del idioma activo. El radio del sidebar escribe st.session_state['lang']."""
-    return STRINGS[st.session_state.get("lang", "en")]
+    """Diccionario de strings del idioma activo (radio, copia de sesión o ?lang=)."""
+    return STRINGS[lang_activo()]
 
 
 def mapas():
@@ -712,7 +712,7 @@ def mapas():
 
     Los datos canónicos del parquet están en español; estos mapas son solo de vista.
     -> identidad en el idioma en que ya están guardados."""
-    lang = st.session_state.get("lang", "en")
+    lang = lang_activo()
     estado_map = ESTADO_EN if lang == "en" else {k: k for k in ESTADO_COLOR_ES}
     estado_color = ESTADO_COLOR_EN if lang == "en" else ESTADO_COLOR_ES
     clase_map = CLASE_ES if lang == "es" else {k: k for k in CLASE_COLOR}
@@ -731,6 +731,118 @@ def cargar_favicon():
     x0 = (im.width - lado) // 2
     y0 = (im.height - lado) // 2
     return im.crop((x0, y0, x0 + lado, y0 + lado)).resize((64, 64), Image.LANCZOS)
+
+
+_IDIOMAS = ("es", "en")
+
+
+def _query_get(nombre: str) -> str:
+    """Valor de un query param, o '' si no hay sesión de Streamlit."""
+    try:
+        raw = st.query_params.get(nombre, "")
+    except Exception:
+        return ""
+    if isinstance(raw, (list, tuple)):
+        raw = raw[0] if raw else ""
+    return str(raw or "")
+
+
+def restaurar_idioma() -> None:
+    """Antes del radio. Si la key del widget no está, recupera la elección.
+
+    `lang` es la key del radio. Al cambiar de página Streamlit la descarta
+    (el default de persist_state), y el demo entra con switch_page: sin esto
+    el selector vuelve a inglés. `idioma` no es un widget, así que sobrevive
+    ese cambio. ?lang= cubre un F5 o un link, igual que ?demo=1.
+    """
+    if st.session_state.get("lang") in _IDIOMAS:
+        return
+    elegido = st.session_state.get("idioma")
+    if elegido not in _IDIOMAS:
+        elegido = _query_get("lang")
+    st.session_state["lang"] = elegido if elegido in _IDIOMAS else "en"
+
+
+def publicar_idioma() -> None:
+    """Después del radio: espeja la elección a `idioma` y a ?lang=."""
+    elegido = st.session_state.get("lang")
+    if elegido not in _IDIOMAS:
+        return
+    st.session_state["idioma"] = elegido
+    try:
+        if _query_get("lang") != elegido:
+            st.query_params["lang"] = elegido
+    except Exception:
+        pass
+
+
+def lang_activo() -> str:
+    for clave in ("lang", "idioma"):
+        valor = st.session_state.get(clave)
+        if valor in _IDIOMAS:
+            return valor
+    query = _query_get("lang")
+    return query if query in _IDIOMAS else "en"
+
+
+def selector_idioma() -> None:
+    """Radio del sidebar. persist_state='session' cuando existe: si no, el
+    cambio de página olvida el widget y la UI vuelve a inglés."""
+    restaurar_idioma()
+    kwargs = dict(
+        options=["es", "en"],
+        format_func=lambda codigo: "Español" if codigo == "es" else "English",
+        horizontal=True,
+        key="lang",
+    )
+    try:
+        import inspect
+        if "persist_state" in inspect.signature(st.radio).parameters:
+            kwargs["persist_state"] = "session"
+    except (TypeError, ValueError):
+        pass
+    st.sidebar.radio(
+        "🌐 " + STRINGS[st.session_state["lang"]]["lang_label"],
+        **kwargs,
+    )
+    publicar_idioma()
+
+
+def params_navegacion() -> dict[str, str]:
+    """Query string para switch_page. Desde Streamlit 1.65, llamarlo sin
+    query_params borra ?lang= y ?demo=."""
+    try:
+        params = {
+            clave: valor
+            for clave, valor in dict(st.query_params).items()
+            if clave.lower() not in ("embed", "embed_options")
+        }
+    except Exception:
+        params = {}
+    params["lang"] = lang_activo()
+    if st.session_state.get("modo_demo"):
+        params["demo"] = "1"
+    else:
+        params.pop("demo", None)
+    return params
+
+
+def ir_a(page: str) -> None:
+    """switch_page que conserva el idioma y, si corresponde, el demo."""
+    params = params_navegacion()
+    try:
+        st.switch_page(page, query_params=params)
+    except TypeError:
+        # firma vieja: no recibe query_params y tampoco los borra
+        try:
+            for clave, valor in params.items():
+                if _query_get(clave) != valor:
+                    st.query_params[clave] = valor
+            if "demo" not in params and _query_get("demo"):
+                del st.query_params["demo"]
+        except Exception:
+            pass
+        st.switch_page(page)
 
 
 def es_demo() -> bool:
