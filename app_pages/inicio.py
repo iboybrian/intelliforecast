@@ -513,7 +513,7 @@ def dialog_contact_sales():
 
 def _ir_demo():
     core.entrar_demo()
-    st.switch_page("app_pages/forecast.py")
+    core.ir_a("app_pages/forecast.py")
 
 
 def cta(key):
@@ -571,7 +571,7 @@ with st.container(key="sect_blue_why"):
             st.caption(cuerpo)
 
 def _paso_numerado(n, texto):
-    # los strings existentes vienen como "1 · Subís tus CSVs" (es/en) -- se reusa
+    # los strings existentes vienen como "1 · Subes tus CSVs" (es/en) -- se reusa
     # el cuerpo y se renumera "01." para el formato del indice sticky
     partes = texto.split(" · ", 1)
     resto = partes[1] if len(partes) == 2 else texto
@@ -581,7 +581,7 @@ def _paso_numerado(n, texto):
 # ------------------------------------------------------------------ Cómo funciona (banda blanca, sticky scroll)
 with st.container(key="sect_white_how"):
     pasos = [
-        (_paso_numerado(1, TXT.get("landing_step1_title", "1 · Subís tus CSVs")), TXT.get("landing_step1_body", "")),
+        (_paso_numerado(1, TXT.get("landing_step1_title", "1 · Subes tus CSVs")), TXT.get("landing_step1_body", "")),
         (_paso_numerado(2, TXT.get("landing_step2_title", "2 · Clasificamos")), TXT.get("landing_step2_body", "")),
         (_paso_numerado(3, TXT.get("landing_step3_title", "3 · Compiten modelos")), TXT.get("landing_step3_body", "")),
         (_paso_numerado(4, TXT.get("landing_step4_title", "4 · Traducimos a inventario")), TXT.get("landing_step4_body", "")),

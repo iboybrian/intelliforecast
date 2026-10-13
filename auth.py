@@ -107,7 +107,7 @@ def ir_a_destino():
         st.success(TXT["auth_bienvenida"].format(u=st.session_state["auth_user"]))
         st.link_button(TXT["auth_continuar"], url, type="primary", use_container_width=True)
     else:
-        st.switch_page(url)
+        core.ir_a(url)
 
 
 # --------------------------------------------------------------------- UI
@@ -174,7 +174,7 @@ def sidebar_sesion():
         st.sidebar.caption(TXT["demo_sidebar"])
         if st.sidebar.button(TXT["demo_salir"], key="btn_salir_demo"):
             core.salir_demo()
-            st.switch_page("app_pages/inicio.py")
+            core.ir_a("app_pages/inicio.py")
 
 
 # --------------------------------------------------------------------- CLI
